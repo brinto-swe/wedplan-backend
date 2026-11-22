@@ -9,7 +9,10 @@ import { requireBearerUser } from "./auth/protection.js";
 import { createServiceRouter, serviceErrors } from "./services/routes.js";
 import type { ServiceStore } from "./services/store.js";
 
-export function createApp(auth: Auth, clientOrigin: string, services: ServiceStore) {
+import { bookingErrors, createBookingRouter } from "./bookings/routes.js";
+import type { BookingStore } from "./bookings/store.js";
+
+export function createApp(auth: Auth, clientOrigin: string, services: ServiceStore, bookings?: BookingStore) {
   const app = express();
 
   app.use(helmet());
@@ -26,6 +29,11 @@ export function createApp(auth: Auth, clientOrigin: string, services: ServiceSto
 
   app.use("/api/services", createServiceRouter(services, requireBearerUser(auth, ["vendor", "admin"])));
   app.use("/api/services", serviceErrors);
+
+  if (bookings) {
+    app.use("/api/bookings", createBookingRouter(bookings, auth));
+    app.use("/api/bookings", bookingErrors);
+  }
 
   const handleError: ErrorRequestHandler = (_error, _request, response, next) => {
     console.error("API request failed.");

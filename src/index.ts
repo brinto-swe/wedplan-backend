@@ -41,8 +41,15 @@ async function startServer(): Promise<void> {
     await auth.$context;
 
     const { createServiceStore } = await import("./services/store.js");
-    const services = createServiceStore(client, getDatabase());
-    const server = createApp(auth, env.CLIENT_URL, services).listen(env.PORT, () => {
+    const db = getDatabase();
+    const services = createServiceStore(client, db);
+    stage = "booking index initialization";
+    const { createBookingStore } = await import("./bookings/store.js");
+    const bookings = createBookingStore(db, services);
+    await bookings.ensureIndexes();
+
+    stage = "API listener";
+    const server = createApp(auth, env.CLIENT_URL, services, bookings).listen(env.PORT, () => {
       console.log(`WedPlan API listening on port ${env.PORT}.`);
     });
     server.on("error", () => {

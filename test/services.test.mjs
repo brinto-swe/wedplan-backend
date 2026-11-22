@@ -3,8 +3,8 @@ import { once } from "node:events";
 import { test } from "node:test";
 import { ObjectId } from "mongodb";
 
-import { createApp } from "../dist/app.js";
-import { createServiceStore } from "../dist/services/store.js";
+import { createApp } from "../dist/src/app.js";
+import { createServiceStore } from "../dist/src/services/store.js";
 
 const id = () => new ObjectId().toHexString();
 const accounts = new Map([

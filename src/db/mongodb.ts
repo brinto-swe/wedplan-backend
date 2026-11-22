@@ -7,6 +7,9 @@ if (!uri) {
 }
 
 const client = new MongoClient(uri, {
+  maxPoolSize: 10,
+  connectTimeoutMS: 10_000,
+  serverSelectionTimeoutMS: 10_000,
   serverApi: {
     version: ServerApiVersion.v1,
     strict: true,
@@ -14,7 +17,17 @@ const client = new MongoClient(uri, {
   },
 });
 
-export async function connectDatabase(): Promise<void> {
+let connection: Promise<void> | undefined;
+
+export function connectDatabase(): Promise<void> {
+  connection ??= initializeConnection().catch((error: unknown) => {
+    connection = undefined;
+    throw error;
+  });
+  return connection;
+}
+
+async function initializeConnection(): Promise<void> {
   try {
     await client.connect();
   } catch (error) {

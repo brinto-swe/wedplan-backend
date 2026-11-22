@@ -3,9 +3,9 @@ import { once } from "node:events";
 import { test } from "node:test";
 import { MongoClient, MongoServerError, ObjectId, ServerApiVersion } from "mongodb";
 
-import { createApp } from "../dist/app.js";
-import { createBookingStore } from "../dist/bookings/store.js";
-import { createServiceStore } from "../dist/services/store.js";
+import { createApp } from "../dist/src/app.js";
+import { createBookingStore } from "../dist/src/bookings/store.js";
+import { createServiceStore } from "../dist/src/services/store.js";
 
 const accounts = new Map([
   ["customer", { id: new ObjectId().toHexString(), role: "customer" }],

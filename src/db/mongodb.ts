@@ -15,11 +15,33 @@ const client = new MongoClient(uri, {
 });
 
 export async function connectDatabase(): Promise<void> {
-  await client.connect();
+  try {
+    await client.connect();
+  } catch (error) {
+    reportAtlasDnsError(error);
+    throw error;
+  }
 
-  await client.db("admin").command({ ping: 1 });
+  try {
+    await client.db("admin").command({ ping: 1 });
+  } catch (error) {
+    console.error("MongoDB ping failed.");
+    throw error;
+  }
 
-  console.log("You successfully connected to MongoDB!");
+  console.log("MongoDB ping succeeded.");
+}
+
+function reportAtlasDnsError(error: unknown): void {
+  if (typeof error !== "object" || error === null ||
+    !("syscall" in error) || (error.syscall !== "querySrv" && error.syscall !== "queryTxt") ||
+    !("hostname" in error) || typeof error.hostname !== "string" ||
+    !/^(?:_[a-z0-9-]+\._tcp\.)?(?:[a-z0-9-]+\.)+mongodb\.net\.?$/i.test(error.hostname) ||
+    !("code" in error) || typeof error.code !== "string" || !/^E[A-Z0-9_]{1,30}$/.test(error.code)
+  ) return;
+
+  const stage = error.syscall === "querySrv" ? "SRV" : "TXT";
+  console.error("MongoDB DNS resolution failed", stage, error.hostname, error.code);
 }
 
 export function getDatabase() {

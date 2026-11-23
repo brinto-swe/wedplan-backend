@@ -50,7 +50,7 @@ export function createServiceStore(client: MongoClient, db: Db) {
 
     const expiresAt = vendor.subscriptionExpiresAt;
     const premium = vendor.subscriptionPlan === "premium" &&
-      (expiresAt == null || (expiresAt instanceof Date && expiresAt.getTime() > Date.now()));
+      expiresAt instanceof Date && expiresAt.getTime() > Date.now();
     if (premium) return;
 
     const active = await services.countDocuments({ vendorId, isActive: true }, { session, limit: 3 });

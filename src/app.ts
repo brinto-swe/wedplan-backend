@@ -11,13 +11,16 @@ import type { ServiceStore } from "./services/store.js";
 
 import { bookingErrors, createBookingRouter } from "./bookings/routes.js";
 import type { BookingStore } from "./bookings/store.js";
+import { paymentRouter, stripeWebhook } from "./payments/routes.js";
+import type { Payments } from "./payments/service.js";
 
-export function createApp(auth: Auth, clientOrigin: string, services: ServiceStore, bookings?: BookingStore) {
+export function createApp(auth: Auth, clientOrigin: string, services: ServiceStore, bookings?: BookingStore, payments?: Payments) {
   const app = express();
 
   app.use(helmet());
   app.use(cors({ origin: clientOrigin, credentials: true }));
 
+  if (payments) app.use("/api/webhooks/stripe", stripeWebhook(payments));
   app.all("/api/auth/*splat", toNodeHandler(auth));
 
   app.use(express.json());
@@ -34,6 +37,7 @@ export function createApp(auth: Auth, clientOrigin: string, services: ServiceSto
     app.use("/api/bookings", createBookingRouter(bookings, auth));
     app.use("/api/bookings", bookingErrors);
   }
+  if (payments) app.use("/api/payments", paymentRouter(payments, auth));
 
   const handleError: ErrorRequestHandler = (_error, _request, response, next) => {
     console.error("API request failed.");

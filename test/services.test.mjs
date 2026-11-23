@@ -9,7 +9,7 @@ import { createServiceStore } from "../dist/src/services/store.js";
 const id = () => new ObjectId().toHexString();
 const accounts = new Map([
   ["vendor", { id: id(), role: "vendor", subscriptionPlan: "free" }],
-  ["premium", { id: id(), role: "vendor", subscriptionPlan: "premium" }],
+  ["premium", { id: id(), role: "vendor", subscriptionPlan: "premium", subscriptionExpiresAt: new Date(Date.now() + 86_400_000) }],
   ["expired", { id: id(), role: "vendor", subscriptionPlan: "premium", subscriptionExpiresAt: new Date(0) }],
   ["blocked", { id: id(), role: "vendor", isBlocked: true }],
   ["customer", { id: id(), role: "customer" }],

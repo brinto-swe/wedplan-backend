@@ -13,7 +13,7 @@ Set these in Vercel for the environment you intend to deploy. Store credential v
 | Variable | Purpose |
 | --- | --- |
 | `MONGODB_URI` | Atlas driver connection string for the deployment database user |
-| `MONGODB_DATABASE` | Explicit target database name |
+| `MONGODB_DATABASE` | Required explicit target database name, using 1–63 letters, digits, hyphens or underscores |
 | `BETTER_AUTH_SECRET` | Stable high-entropy secret, at least 32 characters |
 | `CLIENT_URL` | Exact public HTTPS Netlify frontend origin |
 | `BETTER_AUTH_URL` | Browser-facing HTTPS API origin, without `/api/auth` |
@@ -26,8 +26,75 @@ Allow the deployment’s approved egress addresses in Atlas. The database user n
 
 After a manual deployment, check `GET /api/auth/ok` and `GET /api/services` for HTTP 200, and anonymous `GET /api/bookings/my` for HTTP 401. The API has no homepage at `/`. Verify credentialed CORS, email and OAuth login, session persistence and JWT issuance from the deployed frontend. If startup returns 503, inspect the sanitized initialization stage in Vercel Function Logs.
 
-Stripe is not used by the current application.
+See [Stripe subscriptions](#stripe-subscriptions) for Vercel billing configuration.
 
 ## Local development
 
 Use Node.js 24, run `npm ci`, and configure a local ignored `.env` from `.env.example`. Use `npm run dev` for watch mode or `npm run build` followed by `npm start` for the local production-style listener. The default local port is 5000. Run `npm run typecheck` and `npm test` to verify changes. The default suite uses test doubles. Keep `BOOKINGS_MONGO_INTEGRATION` unset when avoiding database writes.
+
+## Seed the initial admin and vendor
+
+Run this command only on an authorized workstation in an interactive terminal. It has no HTTP route or startup, build, deployment, or CI hook.
+
+1. Confirm the Atlas cluster and database in the Atlas console. Allow the workstation's IP through the Atlas network access rules and use a database credential authorized for the target database. The seed uses MongoDB transactions through the same Better Auth adapter as the API. Use Atlas or another replica set for testing.
+2. Verify the auth `user` collection has a full, single-field unique index on `email` with simple collation. The CLI checks for it and stops if it is missing. If needed, have the database operator review existing emails and provision the index separately before seeding.
+3. Set the variables below in the backend root's ignored `.env` file or inject them into the local terminal environment using your secret manager. The CLI loads the file before validation and gives existing terminal variables precedence. Keep seed credentials out of Vercel, CI, source control, and shell history.
+
+| Variable | Value |
+| --- | --- |
+| `MONGODB_URI` | Connection string for the verified target Atlas cluster |
+| `MONGODB_DATABASE` | Explicit target database name |
+| `WEDPLAN_SEED_EXPECTED_DATABASE` | Independently confirm this exact database name against Atlas |
+| `WEDPLAN_SEED_AUTH_SECRET` | Separate, randomly generated Better Auth secret of at least 32 characters |
+| `WEDPLAN_SEED_ADMIN_NAME` | Initial admin's full name |
+| `WEDPLAN_SEED_ADMIN_EMAIL` | Initial admin's email address |
+| `WEDPLAN_SEED_ADMIN_PASSWORD` | Initial admin's password |
+| `WEDPLAN_SEED_VENDOR_NAME` | Initial vendor's full name |
+| `WEDPLAN_SEED_VENDOR_EMAIL` | Initial vendor's email address |
+| `WEDPLAN_SEED_VENDOR_PASSWORD` | Initial vendor's password |
+
+Use distinct email addresses and distinct, randomly generated passwords of 16 to 128 characters. Include upper- and lowercase letters, a digit, and a symbol. From the backend repository after installing dependencies, run:
+
+```sh
+npm run seed:accounts
+```
+
+The command checks both targets before attempting signup and reports only the role and outcome. An existing marked account is accepted only when it has the expected role, is unblocked, and has a valid credential linkage. Conflicts require operator review. A retry after partial success creates only missing accounts. Reruns do not rotate credentials. New accounts use the ordinary email verification default and receive no sessions from seeding. Remove the seed variables from the terminal environment when finished.
+
+## Stripe subscriptions
+
+Set all three Stripe variables to enable payments. Leaving all three unset disables the payment routes. Partial or invalid configuration fails startup. Keep secrets in the backend environment.
+
+| Variable | Value |
+| --- | --- |
+| `STRIPE_SECRET_KEY` | Stripe secret API key for the environment |
+| `STRIPE_WEBHOOK_SECRET` | Signing secret for this exact webhook destination or local Stripe CLI listener |
+| `STRIPE_PREMIUM_PRICE_ID` | Recurring Premium Price ID from the same Stripe account and mode |
+| `CLIENT_URL` | Frontend origin used for Checkout return URLs |
+
+### Local Test Mode
+
+1. Use an isolated MongoDB replica-set database and a disposable Vendor account. Select a Stripe sandbox, create a product with a recurring Price, and set the sandbox key and Price ID in the backend environment.
+2. Authenticate the Stripe CLI to that sandbox. Start a local listener in a dedicated terminal and keep its signing secret private.
+
+   ```sh
+   stripe login
+   stripe listen --events checkout.session.completed,checkout.session.expired,invoice.paid,invoice.payment_failed,customer.subscription.updated,customer.subscription.deleted --forward-to localhost:5000/api/webhooks/stripe
+   ```
+
+3. Set `STRIPE_WEBHOOK_SECRET` to the listener's signing secret and start the backend with `npm run dev`. Use the local frontend origin for `CLIENT_URL`.
+4. With the disposable Vendor's bearer token, send an empty POST to `/api/payments/create-checkout-session` and open the returned URL. Complete Checkout using a [Stripe sandbox payment method](https://docs.stripe.com/testing). Confirm that `GET /api/payments/subscription` and `GET /api/payments/transactions` reflect the signed webhooks. Generic `stripe trigger` fixtures can test delivery, but entitlement changes require a Stripe Customer and Subscription linked to the Vendor by WedPlan Checkout.
+5. Use `POST /api/payments/cancel-subscription` to schedule cancellation at period end. For automated checks without Stripe API calls, run `npm test`. After building, run only the payment tests with `node --test test/payments.test.mjs`.
+
+### Vercel setup
+
+Set the backend environment variables in Vercel for the target deployment environment. Set `CLIENT_URL` to the exact HTTPS frontend origin. Use separate Stripe credentials and MongoDB databases for test and live billing. The database account must support transactions and be able to create the billing indexes at startup.
+
+In Stripe Workbench, register `https://wedplan-backend-six.vercel.app/api/webhooks/stripe` as a **snapshot** destination for your Stripe account. Use API version `2026-11-18.endive`, which matches the installed Stripe SDK. Select the six events listed in the local listener command. Set `STRIPE_WEBHOOK_SECRET` from that destination before testing delivery. See [Stripe webhook setup](https://docs.stripe.com/webhooks) and [subscription events](https://docs.stripe.com/billing/subscriptions/webhooks).
+
+### Billing behavior
+
+- Vendor payment endpoints use bearer authentication. Checkout and cancellation accept an empty body. Transaction history accepts `page` and `limit` and reports amounts in the currency's minor unit.
+- Premium requires a verified webhook, an active Stripe subscription, and a paid invoice covering the configured Price. Failed renewals without verified paid coverage remove Premium access. Scheduled cancellation retains access through the earlier of the paid period end or Stripe cancellation date. Expiration is checked when account status or service capacity is read.
+- When a Vendor returns to Free, existing published services remain online. The API blocks creating or reactivating active services while the Vendor has three or more.
+- MongoDB commits webhook receipts, entitlement changes and invoice transactions together. A 503 leaves the event eligible for Stripe retry.

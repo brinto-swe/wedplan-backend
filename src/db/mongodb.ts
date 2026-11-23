@@ -1,12 +1,14 @@
 import { MongoClient, ServerApiVersion } from "mongodb";
+import { mongoEnvSchema } from "./config.js";
 
-const uri = process.env.MONGODB_URI;
-
-if (!uri) {
-  throw new Error("MONGODB_URI is not defined");
+const config = mongoEnvSchema.safeParse(process.env);
+if (!config.success) {
+  const fields = config.error.issues.map(({ path }) => path.join("."));
+  throw new Error("Missing or invalid MongoDB configuration: " + fields.join(", "));
 }
 
-const client = new MongoClient(uri, {
+const { MONGODB_URI, MONGODB_DATABASE } = config.data;
+const client = new MongoClient(MONGODB_URI, {
   maxPoolSize: 10,
   connectTimeoutMS: 10_000,
   serverSelectionTimeoutMS: 10_000,
@@ -58,7 +60,7 @@ function reportAtlasDnsError(error: unknown): void {
 }
 
 export function getDatabase() {
-  return client.db(process.env.MONGODB_DATABASE || "wedplan");
+  return client.db(MONGODB_DATABASE);
 }
 
 export { client };

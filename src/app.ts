@@ -24,7 +24,7 @@ export function createApp(auth: Auth, clientOrigin: string, services: ServiceSto
 
   if (payments) app.use("/api/webhooks/stripe", stripeWebhook(payments));
   app.all("/api/auth/*splat", toNodeHandler(auth));
-  if (adminUsers) app.use("/api/admin", createAdminRouter(adminUsers, auth));
+  if (adminUsers) app.use("/api/admin", createAdminRouter(adminUsers, auth, services));
 
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));

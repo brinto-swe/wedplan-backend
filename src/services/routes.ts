@@ -4,35 +4,53 @@ import { z } from "zod";
 import { createService, managementQuery, publicQuery, serviceId, updateService } from "./schemas.js";
 import { ServiceError, type Service, type ServiceManager, type ServiceStore } from "./store.js";
 
-function serialize({ _id, ...service }: Service) {
-  return { id: _id.toHexString(), ...service };
+export function serializeService({ _id, title, description, category, price, location, isActive, vendorId, createdAt, updatedAt }: Service) {
+  return { id: _id.toHexString(), title, description, category, price, location, isActive, vendorId, createdAt, updatedAt };
+}
+
+export function createServiceManagementHandlers(store: ServiceStore) {
+  const detail: RequestHandler = async (request, response) => {
+    const manager: ServiceManager = response.locals.profile;
+    const service = await store.findManaged(manager, serviceId.parse(request.params.id));
+    if (!service) throw new ServiceError(404, "Service not found");
+    response.json({ data: serializeService(service) });
+  };
+  const update: RequestHandler = async (request, response) => {
+    const manager: ServiceManager = response.locals.profile;
+    const service = await store.update(manager, serviceId.parse(request.params.id), updateService.parse(request.body));
+    if (!service) throw new ServiceError(404, "Service not found");
+    response.json({ data: serializeService(service) });
+  };
+  const remove: RequestHandler = async (request, response) => {
+    const manager: ServiceManager = response.locals.profile;
+    const removed = await store.remove(manager, serviceId.parse(request.params.id));
+    if (!removed) throw new ServiceError(404, "Service not found");
+    response.status(204).end();
+  };
+  return { detail, update, remove };
 }
 
 export function createServiceRouter(store: ServiceStore, authorize: RequestHandler) {
   const router = Router();
+  const management = createServiceManagementHandlers(store);
 
   router.get("/", async (request, response) => {
     const result = await store.listPublic(publicQuery.parse(request.query));
-    response.json({ data: result.data.map(serialize), pagination: result.pagination });
+    response.json({ data: result.data.map(serializeService), pagination: result.pagination });
   });
 
   router.get("/manage", authorize, async (request, response) => {
     const manager: ServiceManager = response.locals.profile;
     const result = await store.listManaged(manager, managementQuery.parse(request.query));
-    response.json({ data: result.data.map(serialize), pagination: result.pagination });
+    response.json({ data: result.data.map(serializeService), pagination: result.pagination });
   });
 
-  router.get("/manage/:id", authorize, async (request, response) => {
-    const manager: ServiceManager = response.locals.profile;
-    const service = await store.findManaged(manager, serviceId.parse(request.params.id));
-    if (!service) throw new ServiceError(404, "Service not found");
-    response.json({ data: serialize(service) });
-  });
+  router.get("/manage/:id", authorize, management.detail);
 
   router.get("/:id", async (request, response) => {
     const service = await store.findPublic(serviceId.parse(request.params.id));
     if (!service) throw new ServiceError(404, "Service not found");
-    response.json({ data: serialize(service) });
+    response.json({ data: serializeService(service) });
   });
 
   router.post("/", authorize, async (request, response) => {
@@ -41,22 +59,11 @@ export function createServiceRouter(store: ServiceStore, authorize: RequestHandl
     const service = await store.create(manager, createService.parse(request.body));
     const path = service.isActive ? "/api/services" : "/api/services/manage";
     response.location(`${path}/${service._id.toHexString()}`);
-    response.status(201).json({ data: serialize(service) });
+    response.status(201).json({ data: serializeService(service) });
   });
 
-  router.patch("/:id", authorize, async (request, response) => {
-    const manager: ServiceManager = response.locals.profile;
-    const service = await store.update(manager, serviceId.parse(request.params.id), updateService.parse(request.body));
-    if (!service) throw new ServiceError(404, "Service not found");
-    response.json({ data: serialize(service) });
-  });
-
-  router.delete("/:id", authorize, async (request, response) => {
-    const manager: ServiceManager = response.locals.profile;
-    const removed = await store.remove(manager, serviceId.parse(request.params.id));
-    if (!removed) throw new ServiceError(404, "Service not found");
-    response.status(204).end();
-  });
+  router.patch("/:id", authorize, management.update);
+  router.delete("/:id", authorize, management.remove);
 
   return router;
 }

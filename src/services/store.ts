@@ -1,6 +1,7 @@
 import { ObjectId, type ClientSession, type Db, type Filter, type MongoClient } from "mongodb";
 
-import type { ListQuery, ServiceInput } from "./schemas.js";
+import { authCollections } from "../auth/schema.js";
+import type { AdminServiceQuery, ListQuery, ServiceInput } from "./schemas.js";
 
 export type Service = ServiceInput & {
   _id: ObjectId;
@@ -24,9 +25,21 @@ type VendorAccount = {
   subscriptionPlan?: string;
   subscriptionExpiresAt?: Date | null;
   serviceCapacityVersion?: number;
+  name?: string;
+  businessName?: string;
 };
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function searchFilter({ q, category }: Pick<ListQuery, "q" | "category">): Filter<Service> {
+  const filter: Filter<Service> = {};
+  if (category) filter.category = new RegExp(`^${escapeRegex(category)}$`, "i");
+  if (q) {
+    const search = new RegExp(escapeRegex(q), "i");
+    filter.$or = [{ title: search }, { description: search }];
+  }
+  return filter;
+}
 
 function ownership(manager: ServiceManager): Filter<Service> {
   return manager.role === "admin" ? {} : { vendorId: manager.id };
@@ -35,7 +48,7 @@ function ownership(manager: ServiceManager): Filter<Service> {
 export function createServiceStore(client: MongoClient, db: Db) {
   const services = db.collection<Service>("services");
   // Better Auth's existing MongoDB configuration uses the user collection and ObjectIds.
-  const users = db.collection<VendorAccount>("user");
+  const users = db.collection<VendorAccount>(authCollections.user);
 
   async function ensureCapacity(vendorId: string, session: ClientSession, requester: ServiceManager) {
     // A write to the same vendor document serializes all additions to active inventory.
@@ -74,14 +87,31 @@ export function createServiceStore(client: MongoClient, db: Db) {
 
   return {
     listPublic(query: ListQuery) {
-      const filter: Filter<Service> = { isActive: true };
-      if (query.category) filter.category = new RegExp(`^${escapeRegex(query.category)}$`, "i");
+      const filter: Filter<Service> = { ...searchFilter(query), isActive: true };
       if (query.location) filter.location = new RegExp(`^${escapeRegex(query.location)}$`, "i");
-      if (query.q) {
-        const search = new RegExp(escapeRegex(query.q), "i");
-        filter.$or = [{ title: search }, { description: search }];
-      }
       return list(filter, query);
+    },
+
+    async listAdmin(query: AdminServiceQuery) {
+      const filter = searchFilter(query);
+      if (query.vendorId) filter.vendorId = query.vendorId;
+      if (query.visibility) filter.isActive = query.visibility === "active";
+      const result = await list(filter, query);
+      const ids = [...new Set(result.data.map(({ vendorId }) => vendorId))].filter((id) => ObjectId.isValid(id));
+      const vendors = ids.length ? await users.find(
+        { _id: { $in: ids.map((id) => new ObjectId(id)) }, role: "vendor" },
+        { projection: { _id: 1, name: 1, businessName: 1 } },
+      ).toArray() : [];
+      const display = new Map(vendors.map(({ _id, name, businessName }) => [
+        _id.toHexString(), {
+          id: _id.toHexString(),
+          ...(typeof name === "string" && name ? { name } : {}),
+          ...(typeof businessName === "string" && businessName ? { businessName } : {}),
+        },
+      ]));
+      return { ...result, data: result.data.map((service) => ({
+        service, vendor: display.get(service.vendorId) ?? null,
+      })) };
     },
 
     listManaged(manager: ServiceManager, query: ListQuery) {

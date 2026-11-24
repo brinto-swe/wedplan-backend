@@ -29,6 +29,13 @@ export const publicQuery = pagination.extend({
 });
 export const managementQuery = pagination;
 export const serviceId = z.string().regex(/^[a-f0-9]{24}$/i).transform((id) => new ObjectId(id));
+export const adminServiceQuery = pagination.extend({
+  q: text(120).optional(),
+  category: text(80).optional(),
+  vendorId: serviceId.transform((id) => id.toHexString()).optional(),
+  visibility: z.enum(["active", "inactive"]).optional(),
+});
 
 export type ServiceInput = z.output<typeof createService>;
 export type ListQuery = z.output<typeof publicQuery>;
+export type AdminServiceQuery = z.output<typeof adminServiceQuery>;

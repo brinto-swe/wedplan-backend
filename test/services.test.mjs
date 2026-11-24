@@ -14,6 +14,7 @@ const accounts = new Map([
   ["blocked", { id: id(), role: "vendor", isBlocked: true }],
   ["customer", { id: id(), role: "customer" }],
   ["admin", { id: id(), role: "admin" }],
+  ["blocked-admin", { id: id(), role: "admin", isBlocked: true }],
 ]);
 
 const fixture = {
@@ -67,6 +68,17 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       if (name === "services") return documents;
       assert.equal(name, "user");
       return {
+        find(filter, { projection }) {
+          assert.deepEqual(projection, { _id: 1, name: 1, businessName: 1 });
+          const vendors = [...accounts.values()].filter((account) =>
+            account.role === filter.role && filter._id.$in.some((id) => id.equals(account.id)));
+          return { async toArray() {
+            return vendors.map(({ id }) => ({
+              _id: new ObjectId(id), name: "Vendor display name", businessName: "Wedding Studio",
+              email: "private@example.test", password: "synthetic", seedMarker: "synthetic",
+            }));
+          } };
+        },
         async findOneAndUpdate(filter, update, options) {
           assert.ok(options.session);
           assert.deepEqual(update, { $inc: { serviceCapacityVersion: 1 } });
@@ -101,14 +113,14 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       internalAdapter: { findUserById: async (id) => [...accounts.values()].find((user) => user.id === id) },
     }),
   };
-  const server = createApp(auth, "http://localhost:3000", createServiceStore(client, database))
+  const server = createApp(auth, "http://localhost:3000", createServiceStore(client, database), undefined, undefined, {})
     .listen(0, "127.0.0.1");
   t.after(() => new Promise((resolve) => server.close(resolve)));
   await once(server, "listening");
   const base = "http://127.0.0.1:" + server.address().port;
 
-  async function request(method, path = "", actor, body) {
-    return fetch(base + "/api/services" + path, {
+  async function request(method, path = "", actor, body, prefix = "/api/services") {
+    return fetch(base + prefix + path, {
       method,
       headers: {
         ...(actor && { Authorization: "Bearer " + actor }),
@@ -117,6 +129,17 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       body: typeof body === "string" ? body : JSON.stringify(body),
     });
   }
+
+  const adminRequest = (method, path = "", body, actor = "admin") =>
+    request(method, path, actor, body, "/api/admin/services");
+
+  await t.test("Admin service routes reject every non-admin actor", async () => {
+    for (const [actor, status] of [[null, 401], ["customer", 403], ["vendor", 403], ["blocked-admin", 403]]) {
+      for (const [method, path, body] of [["GET", ""], ["GET", "/invalid"], ["PATCH", "/invalid", "{"], ["DELETE", "/invalid"]]) {
+        assert.equal((await adminRequest(method, path, body, actor)).status, status);
+      }
+    }
+  });
 
   let owned;
   let draft;
@@ -197,6 +220,73 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     for (let index = 0; index < 4; index++) {
       assert.equal((await request("POST", "", "premium", fixture)).status, 201);
       assert.equal((await request("POST", "", "expired", fixture)).status, index < 3 ? 201 : 409);
+    }
+  });
+
+  await t.test("Admin service listing filters across vendors and returns only safe display fields", async () => {
+    rows.length = 0;
+    const add = (actor, title, category, isActive, day) => {
+      const row = { ...fixture, _id: new ObjectId(), title, category, isActive,
+        description: day === 4 ? "Includes a reception portrait" : fixture.description,
+        vendorId: accounts.get(actor)?.id ?? id(), createdAt: new Date(2025, 0, day),
+        updatedAt: new Date(2025, 0, day), seedMarker: "synthetic" };
+      rows.push(row);
+      return row;
+    };
+    add("vendor", "Photo A", "Photo", true, 1);
+    add("vendor", "Photo B", "Photo", true, 2);
+    const active = add("vendor", "Photo C", "Photo", true, 3);
+    const draft = add("vendor", "Portrait package", "Photo", false, 4);
+    const other = add("premium", "Wedding flowers", "Florist", true, 5);
+    const missingVendor = add("missing", "Unlinked service", "Other", false, 6);
+
+    for (const [query, total, titles] of [
+      ["?limit=2&page=2", 6, ["Portrait package", "Photo C"]],
+      ["?q=FLOWERS", 1, ["Wedding flowers"]],
+      ["?q=reception+portrait", 1, ["Portrait package"]],
+      ["?q=.*", 0, []],
+      ["?category=pHoTo&visibility=active", 3, ["Photo C", "Photo B", "Photo A"]],
+      ["?visibility=inactive", 2, ["Unlinked service", "Portrait package"]],
+      ["?vendorId=" + other.vendorId.toUpperCase(), 1, ["Wedding flowers"]],
+    ]) {
+      const response = await adminRequest("GET", query);
+      assert.equal(response.status, 200);
+      const { data, pagination } = await response.json();
+      assert.equal(pagination.total, total);
+      assert.deepEqual(data.map(({ title }) => title), titles);
+      if (query.startsWith("?limit=2")) assert.deepEqual(pagination, { page: 2, limit: 2, total: 6, totalPages: 3 });
+      for (const entry of data) {
+        assert.equal("seedMarker" in entry, false);
+        assert.deepEqual(entry.vendor, entry.id === String(missingVendor._id) ? null : {
+          id: entry.vendorId, name: "Vendor display name", businessName: "Wedding Studio",
+        });
+      }
+    }
+    for (const query of ["?vendorId=not-an-id", "?visibility=pending", "?limit=101", "?page=0", "?category=", "?q=a&q=b", "?owner=admin"]) {
+      assert.equal((await adminRequest("GET", query)).status, 400);
+    }
+    assert.equal((await request("GET", "/manage?vendorId=" + other.vendorId, "vendor")).status, 400);
+    assert.equal((await request("GET", "/manage/" + other._id, "vendor")).status, 404);
+
+    const detail = await adminRequest("GET", "/" + draft._id);
+    assert.equal(detail.status, 200);
+    assert.equal((await detail.json()).data.isActive, false);
+    assert.equal((await adminRequest("PATCH", "/" + draft._id, { isActive: true })).status, 409);
+    for (const body of [{ vendorId: other.vendorId }, { isActive: "true" }, { title: "" }]) {
+      assert.equal((await adminRequest("PATCH", "/" + draft._id, body)).status, 400);
+    }
+    const updated = await adminRequest("PATCH", "/" + draft._id, { title: "Edited portrait package" });
+    assert.equal(updated.status, 200);
+    assert.equal((await updated.json()).data.title, "Edited portrait package");
+    assert.equal((await adminRequest("PATCH", "/" + active._id, { isActive: false })).status, 200);
+    assert.equal((await adminRequest("PATCH", "/" + draft._id, { isActive: true })).status, 200);
+    assert.equal(draft.isActive, true);
+    assert.equal((await request("PATCH", "/" + other._id, "vendor", { isActive: false })).status, 404);
+    assert.equal((await request("DELETE", "/" + other._id, "vendor")).status, 404);
+    assert.equal((await adminRequest("DELETE", "/" + other._id)).status, 204);
+    assert.equal((await adminRequest("GET", "/" + other._id)).status, 404);
+    for (const method of ["GET", "PATCH", "DELETE"]) {
+      assert.equal((await adminRequest(method, "/invalid", method === "PATCH" ? { isActive: true } : undefined)).status, 400);
     }
   });
 });

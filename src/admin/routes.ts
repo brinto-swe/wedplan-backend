@@ -3,10 +3,13 @@ import { ZodError } from "zod";
 
 import type { Auth } from "../auth/auth.js";
 import { requireBearerUser } from "../auth/protection.js";
+import { createServiceManagementHandlers, serializeService, serviceErrors } from "../services/routes.js";
+import { adminServiceQuery } from "../services/schemas.js";
+import type { ServiceStore } from "../services/store.js";
 import { userId, userQuery, userStatus } from "./schemas.js";
 import type { AdminUserStore } from "./store.js";
 
-export function createAdminRouter(store: AdminUserStore, auth: Auth) {
+export function createAdminRouter(store: AdminUserStore, auth: Auth, services: ServiceStore) {
   const router = express.Router();
   router.use(requireBearerUser(auth, ["admin"]));
 
@@ -38,6 +41,15 @@ export function createAdminRouter(store: AdminUserStore, auth: Auth) {
     response.json({ data: user });
   });
 
+  const management = createServiceManagementHandlers(services);
+  router.get("/services", async (request, response) => {
+    const { data, pagination } = await services.listAdmin(adminServiceQuery.parse(request.query));
+    response.json({ data: data.map(({ service, vendor }) => ({ ...serializeService(service), vendor })), pagination });
+  });
+  router.get("/services/:id", management.detail);
+  router.patch("/services/:id", express.json(), management.update);
+  router.delete("/services/:id", management.remove);
+  router.use("/services", serviceErrors);
   router.use(adminErrors);
   return router;
 }

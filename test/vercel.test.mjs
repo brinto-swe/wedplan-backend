@@ -64,6 +64,9 @@ test("built Vercel app coalesces startup and retries transient failures", async 
   const protectedRoute = await fetchPath("/api/bookings/my");
   assert.equal(protectedRoute.status, 401);
   await protectedRoute.json();
+  const adminRoute = await fetchPath("/api/admin/users");
+  assert.equal(adminRoute.status, 401);
+  assert.deepEqual(await adminRoute.json(), { error: "Bearer token required" });
 
   assert.equal(connections, 2);
   assert.equal(pings, 1);

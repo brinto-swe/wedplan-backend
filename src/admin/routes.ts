@@ -9,10 +9,20 @@ import type { ServiceStore } from "../services/store.js";
 import { adminTransactionQuery, invoiceId, userId, userQuery, userStatus } from "./schemas.js";
 import type { AdminUserStore } from "./store.js";
 import type { AdminTransactionStore } from "./transactions.js";
+import type { AdminOverviewStore } from "./overview.js";
 
-export function createAdminRouter(store: AdminUserStore, auth: Auth, services: ServiceStore, transactions?: AdminTransactionStore) {
+export function createAdminRouter(
+  store: AdminUserStore, auth: Auth, services: ServiceStore,
+  transactions?: AdminTransactionStore, overview?: AdminOverviewStore,
+) {
   const router = express.Router();
   router.use(requireBearerUser(auth, ["admin"]));
+
+  if (overview) {
+    router.get("/overview", async (_request, response) => {
+      response.json({ data: await overview.get() });
+    });
+  }
 
   router.get("/users", async (request, response) => {
     response.json(await store.list(userQuery.parse(request.query)));

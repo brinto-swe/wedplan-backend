@@ -35,6 +35,7 @@ export type Transaction = {
 };
 type Receipt = { _id: string; type: string; status: "processed" | "ignored"; processedAt: Date };
 export const stripeTransactionsCollection = "stripeTransactions";
+export const stripeBillingCollection = "stripeBilling";
 type WebhookChange = {
   billing: Billing;
   subscription?: SubscriptionState;
@@ -43,7 +44,7 @@ type WebhookChange = {
 };
 
 export function createPaymentStore(client: MongoClient, db: Db) {
-  const billing = db.collection<Billing>("stripeBilling");
+  const billing = db.collection<Billing>(stripeBillingCollection);
   const events = db.collection<Receipt>("stripeWebhookEvents");
   const invoices = db.collection<Transaction>(stripeTransactionsCollection);
   const users = db.collection(authCollections.user);

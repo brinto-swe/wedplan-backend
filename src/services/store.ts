@@ -2,6 +2,7 @@ import { ObjectId, type ClientSession, type Db, type Filter, type MongoClient } 
 
 import { authCollections } from "../auth/schema.js";
 import { findVendorDisplay } from "../auth/vendor-display.js";
+import { hasPremiumEntitlement } from "../payments/entitlement.js";
 import type { AdminServiceQuery, ListQuery, ServiceInput } from "./schemas.js";
 
 export type Service = ServiceInput & {
@@ -60,10 +61,7 @@ export function createServiceStore(client: MongoClient, db: Db) {
       throw new ServiceError(403, "Vendor account unavailable");
     }
 
-    const expiresAt = vendor.subscriptionExpiresAt;
-    const premium = vendor.subscriptionPlan === "premium" &&
-      expiresAt instanceof Date && expiresAt.getTime() > Date.now();
-    if (premium) return;
+    if (hasPremiumEntitlement(vendor.subscriptionPlan, vendor.subscriptionExpiresAt)) return;
 
     const active = await services.countDocuments({ vendorId, isActive: true }, { session, limit: 3 });
     if (active >= 3) throw new ServiceError(409, "Free vendors may have at most 3 active services");

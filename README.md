@@ -104,3 +104,9 @@ In Stripe Workbench, register `https://wedplan-backend-six.vercel.app/api/webhoo
 `GET /api/admin/transactions` and `GET /api/admin/transactions/:id` require an unblocked Admin. The list accepts `page`, `limit`, a case-sensitive invoice ID prefix (`q`), `status` (`paid` or `failed`), `vendorId`, `currency`, and inclusive UTC dates `from` and `to` in `YYYY-MM-DD` format.
 
 `amount` is an integer in the currency's minor unit, identified by `amountUnit: "minor"`. The stored `createdAt` is the Stripe invoice webhook event timestamp. Date filters operate on that timestamp, identified by `dateBasis: "stripe_invoice_event"`. Historical invoice creation dates and billing periods are unavailable in the ledger and return as `null` in detail responses.
+
+### Admin overview
+
+`GET /api/admin/overview` requires an unblocked Admin. The `data` object groups users, services, bookings, subscriptions, and revenue. Premium counts require the Premium plan and a future paid-through date. Scheduled cancellations count current Vendor-linked Stripe subscriptions with a future cancellation date or a period-end cancellation still scheduled.
+
+Revenue sums paid invoice ledger records in minor units per currency. Paid and failed counts reflect stored invoice records across all time. The ledger records Stripe webhook event timestamps, which are distinct from invoice creation dates. Empty collections return zero counts and an empty currency breakdown.

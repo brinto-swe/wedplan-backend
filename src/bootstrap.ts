@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { createApp } from "./app.js";
 import { createAdminUserStore } from "./admin/store.js";
 import { createAdminTransactionStore } from "./admin/transactions.js";
+import { createAdminOverviewStore } from "./admin/overview.js";
 import { mongoEnvSchema } from "./db/config.js";
 
 const httpOrigin = z.url({ protocol: /^https?$/ }).transform((value) => new URL(value).origin);
@@ -88,7 +89,10 @@ async function initialize(): Promise<Application> {
       });
     }
     return {
-      app: createApp(auth, env.CLIENT_URL, services, bookings, payments, createAdminUserStore(db), createAdminTransactionStore(db)),
+      app: createApp(
+        auth, env.CLIENT_URL, services, bookings, payments,
+        createAdminUserStore(db), createAdminTransactionStore(db), createAdminOverviewStore(db),
+      ),
       port: env.PORT,
     };
   } catch {

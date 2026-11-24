@@ -1,9 +1,9 @@
-import { mongodbAdapter } from "@better-auth/mongo-adapter";
-import { betterAuth } from "better-auth";
+import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { APIError, createAuthMiddleware, getSessionFromCtx } from "better-auth/api";
 import { jwt } from "better-auth/plugins";
 
 import { client, getDatabase } from "../db/mongodb.js";
+import { accountOptions, authCollections, authDatabase, initialUserFields, userFields } from "./schema.js";
 
 export type Role = "customer" | "vendor" | "admin";
 
@@ -13,24 +13,19 @@ export function createAuth(config: {
   secret: string;
   google: { clientId: string; clientSecret: string };
   github: { clientId: string; clientSecret: string };
-}) {
+}, database: NonNullable<BetterAuthOptions["database"]> = authDatabase(getDatabase(), client)) {
   return betterAuth({
     baseURL: config.baseURL,
     basePath: "/api/auth",
     secret: config.secret,
     trustedOrigins: [config.origin],
-    database: mongodbAdapter(getDatabase(), { client }),
+    database,
     emailAndPassword: { enabled: true },
     socialProviders: { google: config.google, github: config.github },
-    account: { accountLinking: { enabled: false } },
+    account: accountOptions,
     user: {
-      additionalFields: {
-        role: { type: "string", required: false, input: false, defaultValue: "customer" },
-        isBlocked: { type: "boolean", required: false, input: false, defaultValue: false },
-        businessName: { type: "string", required: false, defaultValue: "" },
-        subscriptionPlan: { type: "string", required: false, input: false, defaultValue: "free" },
-        subscriptionExpiresAt: { type: "date", required: false, input: false },
-      },
+      modelName: authCollections.user,
+      additionalFields: userFields,
     },
     databaseHooks: {
       user: {
@@ -38,12 +33,11 @@ export function createAuth(config: {
           before: async (user, context) => ({
             data: {
               ...user,
-              role: context?.path === "/sign-up/email" && context.body?.role === "vendor"
-                ? "vendor"
-                : "customer",
-              isBlocked: false,
-              subscriptionPlan: "free",
-              subscriptionExpiresAt: null,
+              ...initialUserFields(
+                context?.path === "/sign-up/email" && context.body?.role === "vendor"
+                  ? "vendor"
+                  : "customer",
+              ),
             },
           }),
         },

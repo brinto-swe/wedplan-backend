@@ -16,6 +16,6 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true
   },
-  "include": ["app.ts", "src/**/*.ts"],
+  "include": ["app.ts", "src/**/*.ts", "scripts/seed-accounts-core.ts", "scripts/seed-accounts.ts"],
   "exclude": ["node_modules", "dist"]
 }

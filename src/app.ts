@@ -7,6 +7,7 @@ import type { Auth } from "./auth/auth.js";
 import { requireBearerUser } from "./auth/protection.js";
 import { createAdminRouter } from "./admin/routes.js";
 import type { AdminUserStore } from "./admin/store.js";
+import type { AdminTransactionStore } from "./admin/transactions.js";
 
 import { createServiceRouter, serviceErrors } from "./services/routes.js";
 import type { ServiceStore } from "./services/store.js";
@@ -16,7 +17,7 @@ import type { BookingStore } from "./bookings/store.js";
 import { paymentRouter, stripeWebhook } from "./payments/routes.js";
 import type { Payments } from "./payments/service.js";
 
-export function createApp(auth: Auth, clientOrigin: string, services: ServiceStore, bookings?: BookingStore, payments?: Payments, adminUsers?: AdminUserStore) {
+export function createApp(auth: Auth, clientOrigin: string, services: ServiceStore, bookings?: BookingStore, payments?: Payments, adminUsers?: AdminUserStore, adminTransactions?: AdminTransactionStore) {
   const app = express();
 
   app.use(helmet());
@@ -24,7 +25,7 @@ export function createApp(auth: Auth, clientOrigin: string, services: ServiceSto
 
   if (payments) app.use("/api/webhooks/stripe", stripeWebhook(payments));
   app.all("/api/auth/*splat", toNodeHandler(auth));
-  if (adminUsers) app.use("/api/admin", createAdminRouter(adminUsers, auth, services));
+  if (adminUsers) app.use("/api/admin", createAdminRouter(adminUsers, auth, services, adminTransactions));
 
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));

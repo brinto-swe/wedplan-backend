@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { createApp } from "./app.js";
 import { createAdminUserStore } from "./admin/store.js";
+import { createAdminTransactionStore } from "./admin/transactions.js";
 import { mongoEnvSchema } from "./db/config.js";
 
 const httpOrigin = z.url({ protocol: /^https?$/ }).transform((value) => new URL(value).origin);
@@ -86,7 +87,10 @@ async function initialize(): Promise<Application> {
         liveMode: /^(sk|rk)_live_/.test(STRIPE_SECRET_KEY),
       });
     }
-    return { app: createApp(auth, env.CLIENT_URL, services, bookings, payments, createAdminUserStore(db)), port: env.PORT };
+    return {
+      app: createApp(auth, env.CLIENT_URL, services, bookings, payments, createAdminUserStore(db), createAdminTransactionStore(db)),
+      port: env.PORT,
+    };
   } catch {
     console.error(`WedPlan initialization failed during ${stage}.`);
     throw new Error("API initialization failed");

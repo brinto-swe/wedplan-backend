@@ -98,3 +98,9 @@ In Stripe Workbench, register `https://wedplan-backend-six.vercel.app/api/webhoo
 - Premium requires a verified webhook, an active Stripe subscription, and a paid invoice covering the configured Price. Failed renewals without verified paid coverage remove Premium access. Scheduled cancellation retains access through the earlier of the paid period end or Stripe cancellation date. Expiration is checked when account status or service capacity is read.
 - When a Vendor returns to Free, existing published services remain online. The API blocks creating or reactivating active services while the Vendor has three or more.
 - MongoDB commits webhook receipts, entitlement changes and invoice transactions together. A 503 leaves the event eligible for Stripe retry.
+
+### Admin transaction history
+
+`GET /api/admin/transactions` and `GET /api/admin/transactions/:id` require an unblocked Admin. The list accepts `page`, `limit`, a case-sensitive invoice ID prefix (`q`), `status` (`paid` or `failed`), `vendorId`, `currency`, and inclusive UTC dates `from` and `to` in `YYYY-MM-DD` format.
+
+`amount` is an integer in the currency's minor unit, identified by `amountUnit: "minor"`. The stored `createdAt` is the Stripe invoice webhook event timestamp. Date filters operate on that timestamp, identified by `dateBasis: "stripe_invoice_event"`. Historical invoice creation dates and billing periods are unavailable in the ledger and return as `null` in detail responses.

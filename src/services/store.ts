@@ -1,6 +1,7 @@
 import { ObjectId, type ClientSession, type Db, type Filter, type MongoClient } from "mongodb";
 
 import { authCollections } from "../auth/schema.js";
+import { findVendorDisplay } from "../auth/vendor-display.js";
 import type { AdminServiceQuery, ListQuery, ServiceInput } from "./schemas.js";
 
 export type Service = ServiceInput & {
@@ -25,8 +26,6 @@ type VendorAccount = {
   subscriptionPlan?: string;
   subscriptionExpiresAt?: Date | null;
   serviceCapacityVersion?: number;
-  name?: string;
-  businessName?: string;
 };
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -97,18 +96,7 @@ export function createServiceStore(client: MongoClient, db: Db) {
       if (query.vendorId) filter.vendorId = query.vendorId;
       if (query.visibility) filter.isActive = query.visibility === "active";
       const result = await list(filter, query);
-      const ids = [...new Set(result.data.map(({ vendorId }) => vendorId))].filter((id) => ObjectId.isValid(id));
-      const vendors = ids.length ? await users.find(
-        { _id: { $in: ids.map((id) => new ObjectId(id)) }, role: "vendor" },
-        { projection: { _id: 1, name: 1, businessName: 1 } },
-      ).toArray() : [];
-      const display = new Map(vendors.map(({ _id, name, businessName }) => [
-        _id.toHexString(), {
-          id: _id.toHexString(),
-          ...(typeof name === "string" && name ? { name } : {}),
-          ...(typeof businessName === "string" && businessName ? { businessName } : {}),
-        },
-      ]));
+      const display = await findVendorDisplay(db, result.data.map(({ vendorId }) => vendorId));
       return { ...result, data: result.data.map((service) => ({
         service, vendor: display.get(service.vendorId) ?? null,
       })) };

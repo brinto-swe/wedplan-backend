@@ -6,10 +6,11 @@ import { requireBearerUser } from "../auth/protection.js";
 import { createServiceManagementHandlers, serializeService, serviceErrors } from "../services/routes.js";
 import { adminServiceQuery } from "../services/schemas.js";
 import type { ServiceStore } from "../services/store.js";
-import { userId, userQuery, userStatus } from "./schemas.js";
+import { adminTransactionQuery, invoiceId, userId, userQuery, userStatus } from "./schemas.js";
 import type { AdminUserStore } from "./store.js";
+import type { AdminTransactionStore } from "./transactions.js";
 
-export function createAdminRouter(store: AdminUserStore, auth: Auth, services: ServiceStore) {
+export function createAdminRouter(store: AdminUserStore, auth: Auth, services: ServiceStore, transactions?: AdminTransactionStore) {
   const router = express.Router();
   router.use(requireBearerUser(auth, ["admin"]));
 
@@ -50,6 +51,19 @@ export function createAdminRouter(store: AdminUserStore, auth: Auth, services: S
   router.patch("/services/:id", express.json(), management.update);
   router.delete("/services/:id", management.remove);
   router.use("/services", serviceErrors);
+  if (transactions) {
+    router.get("/transactions", async (request, response) => {
+      response.json(await transactions.list(adminTransactionQuery.parse(request.query)));
+    });
+    router.get("/transactions/:id", async (request, response) => {
+      const transaction = await transactions.find(invoiceId.parse(request.params.id));
+      if (!transaction) {
+        response.status(404).json({ error: "Transaction not found" });
+        return;
+      }
+      response.json({ data: transaction });
+    });
+  }
   router.use(adminErrors);
   return router;
 }

@@ -135,7 +135,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       assert.ok((await result.json()).error);
     }
     for (const path of ["/invalid", "?page=0", "?limit=101", "?page=1&page=2", "?role=admin"]) {
-      assert.equal((await request("GET", path)).status, 400);
+      assert.equal((await request("GET", path, "customer")).status, 400);
     }
   });
 
@@ -163,7 +163,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     assert.equal(owned.isActive, false);
     assert.equal(owned.vendorAvailable, true);
     assert.equal(owned.moderationStatus, "pending");
-    assert.equal((await request("GET", "/" + owned.id)).status, 404);
+    assert.equal((await request("GET", "/" + owned.id, "customer")).status, 404);
     assert.equal((await request("PATCH", "/" + owned.id, "vendor", { moderationStatus: "approved" })).status, 400);
     assert.equal((await request("PATCH", "/" + owned.id, "vendor", { isActive: false })).status, 409);
     const approved = await adminRequest("PATCH", "/" + owned.id + "/moderation", { status: "approved" });
@@ -174,10 +174,18 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     assert.equal(createdDraft.status, 201);
     draft = (await createdDraft.json()).data;
     assert.deepEqual(draft.images, [cover, detailImage]);
-    const publicDetail = await request("GET", "/" + owned.id);
+    const detail = "/" + owned.id;
+    assert.equal((await request("GET", detail)).status, 401);
+    assert.equal((await request("GET", detail, "invalid")).status, 401);
+    assert.equal((await request("GET", detail, "blocked")).status, 403);
+    for (const actor of ["vendor", "admin"]) {
+      assert.equal((await request("GET", detail, actor)).status, 200);
+    }
+    const publicDetail = await request("GET", detail, "customer");
+    assert.equal(publicDetail.headers.get("cache-control"), "no-store");
     assert.equal(publicDetail.status, 200);
     assert.deepEqual((await publicDetail.json()).data.images, [cover]);
-    assert.equal((await request("GET", "/" + draft.id)).status, 404);
+    assert.equal((await request("GET", "/" + draft.id, "customer")).status, 404);
     const vendorDetail = await request("GET", "/manage/" + draft.id, "vendor");
     assert.equal(vendorDetail.status, 200);
     assert.deepEqual((await vendorDetail.json()).data.images, [cover, detailImage]);
@@ -199,7 +207,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     for (const images of [Array(11).fill(cover), [cover, "https://unapproved.example/a.png"]]) {
       assert.equal((await request("PATCH", path, "vendor", { images })).status, 400);
     }
-    assert.deepEqual((await (await request("GET", path)).json()).data.images, [cover]);
+    assert.deepEqual((await (await request("GET", path, "customer")).json()).data.images, [cover]);
     const updated = await request("PATCH", path, "vendor", patch);
     assert.equal(updated.status, 200);
     assert.deepEqual((await updated.json()).data.images, patch.images);
@@ -214,7 +222,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     const removed = await request("PATCH", path, "vendor", { images: [] });
     assert.equal(removed.status, 200);
     assert.deepEqual((await removed.json()).data.images, []);
-    assert.deepEqual((await (await request("GET", path)).json()).data.images, []);
+    assert.deepEqual((await (await request("GET", path, "customer")).json()).data.images, []);
   });
 
   await t.test("enforces ownership and lets admins manage every service", async () => {
@@ -256,7 +264,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     assert.equal((await decide(rejected.id, "approved")).status, 409);
     assert.equal((await request("PATCH", "/" + rejected.id, "vendor", { isActive: true })).status, 409);
     assert.equal((await request("PATCH", "/" + rejected.id, "vendor", { price: 200 })).status, 200);
-    assert.equal((await request("GET", "/" + rejected.id)).status, 404);
+    assert.equal((await request("GET", "/" + rejected.id, "customer")).status, 404);
 
     const concurrent = await Promise.all([first, second, third].map(({ id }) => decide(id, "approved")));
     assert.ok(concurrent.every(({ status }) => status === 200));
@@ -269,6 +277,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     assert.equal(older.moderationStatus, "approved");
     assert.equal(older.vendorAvailable, true);
     assert.equal(older.isActive, false);
+    assert.equal((await request("GET", "/" + first.id, "customer")).status, 404);
 
     assert.equal((await request("DELETE", "/" + fourth.id, "vendor")).status, 204);
     assert.deepEqual(await published(), [third.id, second.id, first.id]);
@@ -280,8 +289,8 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     assert.deepEqual(await published(), [second.id, first.id, owned.id]);
     vendor.subscriptionExpiresAt = new Date(0);
     assert.deepEqual(await published(), [second.id, first.id]);
-    assert.equal((await request("GET", "/" + owned.id)).status, 404);
-    assert.equal((await request("GET", "/" + third.id)).status, 404);
+    assert.equal((await request("GET", "/" + owned.id, "customer")).status, 404);
+    assert.equal((await request("GET", "/" + third.id, "customer")).status, 404);
     vendor.subscriptionExpiresAt = new Date(Date.now() + 60_000);
     assert.deepEqual(await published(), [second.id, first.id, owned.id]);
     const rejectionFilter = await adminRequest("GET", "?moderationStatus=rejected");
@@ -357,7 +366,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     assert.equal(detail.status, 200);
     assert.equal((await detail.json()).data.isActive, false);
     for (const response of [
-      await request("GET", "/" + active._id),
+      await request("GET", "/" + active._id, "customer"),
       await request("GET", "/manage/" + active._id, "vendor"),
       await adminRequest("GET", "/" + active._id),
       await adminRequest("PATCH", "/" + active._id, { description: "Legacy service edit" }),

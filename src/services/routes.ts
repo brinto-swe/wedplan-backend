@@ -30,7 +30,7 @@ export function createServiceManagementHandlers(store: ServiceStore) {
   return { detail, update, remove };
 }
 
-export function createServiceRouter(store: ServiceStore, authorize: RequestHandler) {
+export function createServiceRouter(store: ServiceStore, authenticate: RequestHandler, authorize: RequestHandler) {
   const router = Router();
   const management = createServiceManagementHandlers(store);
 
@@ -47,7 +47,7 @@ export function createServiceRouter(store: ServiceStore, authorize: RequestHandl
 
   router.get("/manage/:id", authorize, management.detail);
 
-  router.get("/:id", async (request, response) => {
+  router.get("/:id", authenticate, async (request, response) => {
     const service = await store.findPublic(serviceId.parse(request.params.id));
     if (!service) throw new ServiceError(404, "Service not found");
     response.json({ data: serializeService(service) });

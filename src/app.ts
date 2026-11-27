@@ -39,7 +39,7 @@ export function createApp(
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  app.use("/api/services", createServiceRouter(services, requireBearerUser(auth, ["vendor", "admin"])));
+  app.use("/api/services", createServiceRouter(services, requireBearerUser(auth), requireBearerUser(auth, ["vendor", "admin"])));
   app.use("/api/services", serviceErrors);
 
   if (bookings) {

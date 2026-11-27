@@ -8,6 +8,7 @@ import { createApp } from "../dist/src/app.js";
 import { createPaymentStore } from "../dist/src/payments/store.js";
 import { createPayments } from "../dist/src/payments/service.js";
 import { createServiceStore } from "../dist/src/services/store.js";
+import { aggregate } from "./fixtures/aggregate.mjs";
 
 const origin = "https://app.example.test";
 const secret = "whsec_synthetic_test";
@@ -53,6 +54,11 @@ function databaseFixture() {
       for (const key of Object.keys(update.$unset ?? {})) delete row[key];
     }
     return {
+      aggregate(pipeline) {
+        const user = rows.user.map((account) => ({ ...account, _id: new ObjectId(account._id) }));
+        const result = aggregate(rows[name], pipeline, { ...rows, user });
+        return { toArray: async () => result, next: async () => result[0] ?? null };
+      },
       async createIndex(key, options) { indexes.push({ name, key, options }); },
       async findOne(filter) { return first(filter) ? structuredClone(first(filter)) : null; },
       async updateOne(filter, update, options) {
@@ -119,7 +125,8 @@ test("Stripe payment HTTP routes, signed webhooks, transactional reconciliation 
   const store = createPaymentStore(client, db);
   await store.ensureIndexes();
   assert.deepEqual(indexes.find(({ name }) => name === "stripeBilling").options, { unique: true, sparse: true });
-  const serviceStore = createServiceStore(client, db);
+  const serviceStore = createServiceStore(db);
+  const publishedCount = async () => (await serviceStore.listPublic({ page: 1, limit: 20 })).pagination.total;
   const stripesdk = new Stripe("sk_test_synthetic");
   const checkoutCalls = [];
   const cancellations = [];
@@ -212,10 +219,13 @@ test("Stripe payment HTTP routes, signed webhooks, transactional reconciliation 
 
   const preservedAdmin = structuredClone(rows.user[2]);
   const preservedCredential = structuredClone(rows.account[0]);
-  const createService = () => serviceStore.create({ id: vendorId, role: "vendor" }, {
-    title: "Service", category: "Photo", description: "A wedding service", price: 100, location: "London", isActive: true,
-    images: ["https://i.ibb.co/fixture/cover.webp"],
-  });
+  const createService = async () => {
+    const service = await serviceStore.create({ id: vendorId, role: "vendor" }, {
+      title: "Service", category: "Photo", description: "A wedding service", price: 100, location: "London", isActive: true,
+      images: ["https://i.ibb.co/fixture/cover.webp"],
+    });
+    await serviceStore.moderate({ id: rows.user[2]._id, role: "admin" }, service._id, "approved");
+  };
 
   await t.test("only vendors can access payments and checkout uses the server price", async () => {
     for (const [token, status] of [[null, 401], [actor("customer"), 403], [actor("admin"), 403]]) {
@@ -251,8 +261,8 @@ test("Stripe payment HTTP routes, signed webhooks, transactional reconciliation 
   });
 
   await t.test("free vendors are capped and signed checkout cannot provision unpaid Premium", async () => {
-    for (let i = 0; i < 3; i++) await createService();
-    await assert.rejects(createService(), /at most 3 active services/);
+    for (let i = 0; i < 4; i++) await createService();
+    assert.equal(await publishedCount(), 3);
     const completion = event("evt_checkout", "checkout.session.completed", {
       ...lastCheckout, subscription: sub.id, payment_status: "unpaid",
     });
@@ -281,6 +291,7 @@ test("Stripe payment HTTP routes, signed webhooks, transactional reconciliation 
     assert.equal(rows.stripeTransactions.length, 1);
     await createService();
     await createService();
+    assert.equal(await publishedCount(), 6);
     const history = await (await request("transactions?page=1&limit=1")).json();
     assert.equal(history.pagination.total, 1);
     assert.deepEqual(Object.keys(history.data[0]).sort(), ["amount", "createdAt", "currency", "id", "status", "type"]);
@@ -299,7 +310,7 @@ test("Stripe payment HTTP routes, signed webhooks, transactional reconciliation 
     assert.equal((await deliver(event("evt_renewal_failed", "invoice.payment_failed", { ...invoice }))).status, 200);
     assert.equal((await getStatus()).plan, "free");
     assert.equal(rows.stripeTransactions.find(({ _id }) => _id === invoice.id).status, "failed");
-    await assert.rejects(createService(), /at most 3 active services/);
+    assert.equal(await publishedCount(), 3);
   });
 
   await t.test("renewal, owner-only cancellation, expiration and deletion", async () => {
@@ -314,12 +325,14 @@ test("Stripe payment HTTP routes, signed webhooks, transactional reconciliation 
     assert.equal((await deliver(event("evt_updated", "customer.subscription.updated", { ...sub }))).status, 200);
     const scheduled = await getStatus();
     assert.equal(scheduled.plan, "premium");
+    assert.equal(await publishedCount(), 6);
     assert.equal(scheduled.renewsAt, null);
     assert.equal(scheduled.cancelAtPeriodEnd, true);
     assert.equal(new Date(scheduled.expiresAt).getTime(), (now + 1800) * 1000);
 
     invoicePeriodEnd = now - 1;
     assert.equal((await deliver(event("evt_expired_period", "customer.subscription.updated", { ...sub }))).status, 200);
+    assert.equal(await publishedCount(), 3);
     assert.equal((await getStatus()).plan, "free");
     sub.status = "canceled";
     assert.equal((await deliver(event("evt_deleted", "customer.subscription.deleted", { ...sub }))).status, 200);

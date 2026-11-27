@@ -6,79 +6,7 @@ import { ObjectId } from "mongodb";
 import { createAdminOverviewStore } from "../dist/src/admin/overview.js";
 import { createApp } from "../dist/src/app.js";
 
-const get = (row, path) => path.split(".").reduce((value, key) => value?.[key], row);
-
-function evaluate(expression, row) {
-  if (typeof expression === "string" && expression.startsWith("$")) return get(row, expression.slice(1));
-  if (!expression || typeof expression !== "object" || expression instanceof Date) return expression;
-  const [[op, arg]] = Object.entries(expression);
-  if (op === "$type") return evaluate(arg, row) instanceof Date ? "date" : typeof evaluate(arg, row);
-  if (op === "$convert") {
-    const value = evaluate(arg.input, row);
-    return ObjectId.isValid(value) ? new ObjectId(value) : null;
-  }
-  const [a, b, c] = arg.map((operand) => evaluate(operand, row));
-  switch (op) {
-    case "$eq": return a === b;
-    case "$gt": return a > b;
-    case "$and": return arg.every((operand) => evaluate(operand, row));
-    case "$cond": return a ? b : c;
-    default: throw new Error("Unexpected expression " + op);
-  }
-}
-
-function matches(row, filter) {
-  return Object.entries(filter).every(([key, condition]) => {
-    if (key === "$or") return condition.some((branch) => matches(row, branch));
-    const value = get(row, key);
-    if (condition === null) return value == null;
-    if (typeof condition !== "object") return value === condition;
-    return Object.entries(condition).every(([op, operand]) => {
-      switch (op) {
-        case "$in": return operand.includes(value);
-        case "$nin": return !operand.includes(value);
-        case "$gt": return value instanceof Date && value > operand;
-        case "$type": return typeof value === operand;
-        case "$exists": return (value !== undefined) === operand;
-        default: throw new Error("Unexpected filter " + op);
-      }
-    });
-  });
-}
-
-function aggregate(source, pipeline, collections) {
-  let rows = source;
-  for (const stage of pipeline) {
-    if (stage.$match) rows = rows.filter((row) => matches(row, stage.$match));
-    else if (stage.$set) rows = rows.map((row) => ({
-      ...row, ...Object.fromEntries(Object.entries(stage.$set).map(([key, value]) => [key, evaluate(value, row)])),
-    }));
-    else if (stage.$lookup) {
-      const { as, from, localField, foreignField, pipeline: inner } = stage.$lookup;
-      rows = rows.map((row) => ({
-        ...row, [as]: aggregate(collections[from].filter((foreign) =>
-          row[localField]?.equals(foreign[foreignField])), inner, collections),
-      }));
-    } else if (stage.$project) rows = rows.map((row) =>
-      Object.fromEntries(Object.keys(stage.$project).map((key) => [key, row[key]])));
-    else if (stage.$count) rows = rows.length ? [{ [stage.$count]: rows.length }] : [];
-    else if (stage.$sort) rows.sort((a, b) => a._id.localeCompare(b._id));
-    else if (stage.$group) {
-      const { _id, ...fields } = stage.$group;
-      const groups = new Map();
-      for (const row of rows) {
-        const id = evaluate(_id, row);
-        const total = groups.get(id) ?? { _id: id };
-        for (const [key, { $sum }] of Object.entries(fields)) {
-          total[key] = (total[key] ?? 0) + evaluate($sum, row);
-        }
-        groups.set(id, total);
-      }
-      rows = [...groups.values()];
-    } else throw new Error("Unexpected aggregation stage");
-  }
-  return rows;
-}
+import { aggregate } from "./fixtures/aggregate.mjs";
 
 test("Admin overview authorizes requests and aggregates dashboard stats with empty defaults", async (t) => {
   const future = new Date(Date.now() + 86_400_000);
@@ -96,7 +24,13 @@ test("Admin overview authorizes requests and aggregates dashboard stats with emp
   const collections = {
     user: [premium, expired, noExpiry, invalidExpiry, free, customer, sampleUser(undefined),
       sampleUser("admin", { isBlocked: true }), sampleUser("admin", { isBlocked: false })],
-    services: [{ isActive: true }, { isActive: true }, { isActive: false }, {}],
+    services: [
+      { isActive: true, vendorId: String(premium._id) },
+      { isActive: true, vendorId: String(free._id) },
+      { isActive: false, vendorId: String(free._id) },
+      { isActive: true, moderationStatus: "pending", vendorId: String(free._id) },
+      { isActive: true, moderationStatus: "rejected", vendorId: String(free._id) },
+    ],
     bookings: ["pending", "pending", "accepted", "rejected", "cancelled"].map((status) => ({ status })),
     stripeBilling: [
       bill(premium, { status: "active", cancelAtPeriodEnd: true, periodEnd: future }),
@@ -152,7 +86,7 @@ test("Admin overview authorizes requests and aggregates dashboard stats with emp
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), { data: {
     users: { total: 9, customers: 2, vendors: 5, admins: 2, active: 8, blocked: 1 },
-    services: { total: 4, active: 2, inactive: 2 },
+    services: { total: 5, active: 2, inactive: 3, pending: 1 },
     bookings: { total: 5, pending: 2, accepted: 1, rejected: 1, cancelled: 1 },
     subscriptions: { premium: 1, free: 4, cancellationScheduled: 2 },
     revenue: { ...expectedRevenue, paidInvoiceCount: 3, failedInvoiceCount: 2,
@@ -165,7 +99,7 @@ test("Admin overview authorizes requests and aggregates dashboard stats with emp
   assert.equal(empty.status, 200);
   assert.deepEqual(await empty.json(), { data: {
     users: { total: 0, customers: 0, vendors: 0, admins: 0, active: 0, blocked: 0 },
-    services: { total: 0, active: 0, inactive: 0 },
+    services: { total: 0, active: 0, inactive: 0, pending: 0 },
     bookings: { total: 0, pending: 0, accepted: 0, rejected: 0, cancelled: 0 },
     subscriptions: { premium: 0, free: 0, cancellationScheduled: 0 },
     revenue: { ...expectedRevenue, paidInvoiceCount: 0, failedInvoiceCount: 0, paidByCurrency: [] },

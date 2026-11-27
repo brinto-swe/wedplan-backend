@@ -1,6 +1,7 @@
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 import { hostedImageUrl } from "../uploads/image-url.js";
+import { moderationStatuses } from "./publication.js";
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const serviceImages = z.array(hostedImageUrl).max(10, "Use at most 10 images");
@@ -38,6 +39,7 @@ export const adminServiceQuery = pagination.extend({
   category: text(80).optional(),
   vendorId: serviceId.transform((id) => id.toHexString()).optional(),
   visibility: z.enum(["active", "inactive"]).optional(),
+  moderationStatus: z.enum(moderationStatuses).optional(),
 });
 
 export type ServiceInput = z.output<typeof createService>;

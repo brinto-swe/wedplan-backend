@@ -54,7 +54,7 @@ async function initialize(): Promise<Application> {
     const { createBookingStore } = await import("./bookings/store.js");
     const { createServiceStore } = await import("./services/store.js");
     const db = getDatabase();
-    const services = createServiceStore(client, db);
+    const services = createServiceStore(db);
     const bookings = createBookingStore(db, services);
     await bookings.ensureIndexes();
 

@@ -1,6 +1,7 @@
 import type { Db, Document } from "mongodb";
 
 import { authCollections } from "../auth/schema.js";
+import { publicationStages } from "../services/publication.js";
 import { premiumEntitlementExpression } from "../payments/entitlement.js";
 import { stripeBillingCollection, stripeTransactionsCollection } from "../payments/store.js";
 
@@ -29,8 +30,9 @@ export function createAdminOverviewStore(db: Db) {
             premium: countIf({ $and: [vendor, premium] }),
           } },
         ]).toArray(),
-        services.aggregate<{ total: number; active: number }>([
-          { $group: { _id: null, total: { $sum: 1 }, active: countIf({ $eq: ["$isActive", true] }) } },
+        services.aggregate<{ total: number; active: number; pending: number }>([
+          ...publicationStages(now),
+          { $group: { _id: null, total: { $sum: 1 }, active: countIf({ $eq: ["$isActive", true] }), pending: countIf({ $eq: ["$moderationStatus", "pending"] }) } },
         ]).toArray(),
         bookings.aggregate<{ total: number; pending: number; accepted: number; rejected: number; cancelled: number }>([
           { $group: { _id: null, total: { $sum: 1 },
@@ -75,14 +77,14 @@ export function createAdminOverviewStore(db: Db) {
       ]);
 
       const user = userRows[0] ?? { total: 0, vendors: 0, admins: 0, blocked: 0, premium: 0 };
-      const service = serviceRows[0] ?? { total: 0, active: 0 };
+      const service = serviceRows[0] ?? { total: 0, active: 0, pending: 0 };
       const booking = bookingRows[0] ?? { total: 0, pending: 0, accepted: 0, rejected: 0, cancelled: 0 };
       return {
         users: {
           total: user.total, customers: user.total - user.vendors - user.admins, vendors: user.vendors,
           admins: user.admins, active: user.total - user.blocked, blocked: user.blocked,
         },
-        services: { total: service.total, active: service.active, inactive: service.total - service.active },
+        services: { total: service.total, active: service.active, inactive: service.total - service.active, pending: service.pending },
         bookings: {
           total: booking.total, pending: booking.pending, accepted: booking.accepted,
           rejected: booking.rejected, cancelled: booking.cancelled,

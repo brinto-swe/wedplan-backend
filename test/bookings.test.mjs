@@ -6,6 +6,7 @@ import { MongoClient, MongoServerError, ObjectId, ServerApiVersion } from "mongo
 import { createApp } from "../dist/src/app.js";
 import { createBookingStore } from "../dist/src/bookings/store.js";
 import { createServiceStore } from "../dist/src/services/store.js";
+import { aggregate } from "./fixtures/aggregate.mjs";
 
 const accounts = new Map([
   ["customer", { id: new ObjectId().toHexString(), role: "customer" }],
@@ -15,8 +16,16 @@ const accounts = new Map([
   ["admin", { id: new ObjectId().toHexString(), role: "admin" }],
   ["blocked", { id: new ObjectId().toHexString(), role: "customer", isBlocked: true }],
 ]);
-const activeService = { _id: new ObjectId(), vendorId: accounts.get("vendor").id, isActive: true };
-const inactiveService = { _id: new ObjectId(), vendorId: activeService.vendorId, isActive: false };
+const activeService = { _id: new ObjectId(), vendorId: accounts.get("vendor").id, isActive: true, createdAt: new Date(), moderationStatus: "approved" };
+const inactiveService = { ...activeService, _id: new ObjectId(), isActive: false };
+const pendingService = { ...activeService, _id: new ObjectId(), moderationStatus: "pending" };
+const rejectedService = { ...activeService, _id: new ObjectId(), moderationStatus: "rejected" };
+const overLimitService = { ...activeService, _id: new ObjectId(), createdAt: new Date(0) };
+const serviceFixtures = [
+  activeService, inactiveService, pendingService, rejectedService, overLimitService,
+  { ...activeService, _id: new ObjectId(), createdAt: new Date(1) },
+];
+const vendorFixture = { _id: new ObjectId(activeService.vendorId), role: "vendor" };
 const input = {
   serviceId: activeService._id.toHexString(),
   eventDate: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
@@ -35,12 +44,15 @@ function matches(doc, filter) {
 }
 
 function memoryDatabase() {
-  const services = [activeService, inactiveService];
+  const services = serviceFixtures;
   const rows = [];
   let uniqueIndex;
   const database = {
     collection(name) {
-      if (name === "services") return { findOne: async (filter) => services.find((doc) => matches(doc, filter)) ?? null };
+      if (name === "services") return {
+        findOne: async (filter) => services.find((doc) => matches(doc, filter)) ?? null,
+        aggregate: (pipeline) => ({ next: async () => aggregate(services, pipeline, { user: [vendorFixture] })[0] ?? null }),
+      };
       if (name === "user") return {};
       assert.equal(name, "bookings");
       return {
@@ -81,8 +93,8 @@ function memoryDatabase() {
   return database;
 }
 
-async function bookingSuite(t, db, client, live) {
-  const serviceStore = createServiceStore(client, db);
+async function bookingSuite(t, db, live) {
+  const serviceStore = createServiceStore(db);
   const store = createBookingStore(db, serviceStore);
   await store.ensureIndexes();
   const auth = {
@@ -132,7 +144,9 @@ async function bookingSuite(t, db, client, live) {
     assert.equal((await request("GET", "/invalid", "customer")).status, 400);
     assert.equal((await request("GET", "/my?page=0", "customer")).status, 400);
     assert.equal((await request("PATCH", "/invalid/cancel", "customer", { status: "accepted" })).status, 400);
-    assert.equal((await request("POST", "", "customer", { ...input, serviceId: inactiveService._id.toHexString() })).status, 404);
+    for (const service of [inactiveService, pendingService, rejectedService, overLimitService]) {
+      assert.equal((await request("POST", "", "customer", { ...input, serviceId: service._id.toHexString() })).status, 404);
+    }
     assert.equal((await request("POST", "", "customer", { ...input, serviceId: new ObjectId().toHexString() })).status, 404);
   });
 
@@ -199,7 +213,7 @@ async function bookingSuite(t, db, client, live) {
 }
 
 test("booking HTTP routes using a MongoDB test double", async (t) => {
-  await bookingSuite(t, memoryDatabase(), {}, false);
+  await bookingSuite(t, memoryDatabase(), false);
 });
 
 test("booking HTTP routes and concurrent writes using real MongoDB", {
@@ -219,8 +233,9 @@ test("booking HTTP routes and concurrent writes using real MongoDB", {
   }
   const db = client.db("wp_bkg_test_" + new ObjectId().toHexString());
   try {
-    await db.collection("services").insertMany([activeService, inactiveService]);
-    await bookingSuite(t, db, client, true);
+    await db.collection("services").insertMany(serviceFixtures);
+    await db.collection("user").insertOne(vendorFixture);
+    await bookingSuite(t, db, true);
   } finally {
     try {
       await db.dropDatabase();

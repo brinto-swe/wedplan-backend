@@ -1,15 +1,17 @@
 import express, { type ErrorRequestHandler } from "express";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 
 import type { Auth } from "../auth/auth.js";
 import { requireBearerUser } from "../auth/protection.js";
 import { createServiceManagementHandlers, serializeService, serviceErrors } from "../services/routes.js";
-import { adminServiceQuery } from "../services/schemas.js";
+import { adminServiceQuery, serviceId } from "../services/schemas.js";
 import type { ServiceStore } from "../services/store.js";
 import { adminTransactionQuery, invoiceId, userId, userQuery, userStatus } from "./schemas.js";
 import type { AdminUserStore } from "./store.js";
 import type { AdminTransactionStore } from "./transactions.js";
 import type { AdminOverviewStore } from "./overview.js";
+
+const moderationDecision = z.strictObject({ status: z.enum(["approved", "rejected"]) });
 
 export function createAdminRouter(
   store: AdminUserStore, auth: Auth, services: ServiceStore,
@@ -60,6 +62,16 @@ export function createAdminRouter(
   router.get("/services/:id", management.detail);
   router.patch("/services/:id", express.json(), management.update);
   router.delete("/services/:id", management.remove);
+  router.patch("/services/:id/moderation", express.json(), async (request, response) => {
+    const id = serviceId.parse(request.params.id);
+    const { status } = moderationDecision.parse(request.body);
+    const service = await services.moderate(response.locals.profile, id, status);
+    if (!service) {
+      response.status(404).json({ error: "Service not found" });
+      return;
+    }
+    response.json({ data: serializeService(service) });
+  });
   router.use("/services", serviceErrors);
   if (transactions) {
     router.get("/transactions", async (request, response) => {

@@ -42,6 +42,14 @@ Vendor `POST /api/services` requires an ordered `images` array of 1–10 HTTPS i
 
 Public, Vendor, and Admin service responses include `images`. Existing documents without the field return `images: []` without a database migration.
 
+### Service moderation and publication
+
+New Vendor services start with moderationStatus set to pending. Admins can filter GET /api/admin/services by moderationStatus (pending, approved, or rejected). PATCH /api/admin/services/:id/moderation accepts a status of approved or rejected and decides a pending submission once. The Admin overview includes services.pending.
+
+Service responses include moderationStatus, vendorAvailable (the saved preference), and isActive (effective public visibility). Create and update payloads retain isActive as the availability input. Availability can be changed after approval. Content edits do not change moderation status. Older records without moderation status are treated as Approved, with their stored availability preserved.
+
+Public listings, details, and booking eligibility use the same snapshot calculation. Free Vendors' three newest Approved services are eligible, ordered by creation time and ID. Paused services remain off even within those three. Premium makes all Approved services eligible while paid coverage lasts. Losing eligibility never deletes a service. Publication queries require MongoDB 5.3 or later.
+
 ## Profile management
 
 `GET /api/me` returns the bearer-authenticated account's safe profile, including ID, name, email, role, image, verification status, and registration date. Vendor profiles also include `businessName`. Existing HTTPS avatars from social sign-in can still appear in reads.
@@ -116,7 +124,7 @@ In Stripe Workbench, register `https://wedplan-backend-six.vercel.app/api/webhoo
 
 - Vendor payment endpoints use bearer authentication. Checkout and cancellation accept an empty body. Transaction history accepts `page` and `limit` and reports amounts in the currency's minor unit.
 - Premium requires a verified webhook, an active Stripe subscription, and a paid invoice covering the configured Price. Failed renewals without verified paid coverage remove Premium access. Scheduled cancellation retains access through the earlier of the paid period end or Stripe cancellation date. Expiration is checked when account status or service capacity is read.
-- When a Vendor returns to Free, existing published services remain online. The API blocks creating or reactivating active services while the Vendor has three or more.
+- A Free Vendor can publish only their three newest Approved services. Expiry applies this limit on the next visibility read. Paid renewal restores eligible Approved services whose Vendor availability remains enabled.
 - MongoDB commits webhook receipts, entitlement changes and invoice transactions together. A 503 leaves the event eligible for Stripe retry.
 
 ### Admin transaction history

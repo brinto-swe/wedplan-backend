@@ -28,23 +28,16 @@ const fixture = {
   images: [cover],
 };
 
-function matches(doc, filter) {
-  return Object.entries(filter).every(([key, value]) => {
-    if (key === "$or") return value.some((term) => matches(doc, term));
-    if (value instanceof RegExp) return value.test(doc[key]);
-    if (value instanceof ObjectId) return value.equals(doc[key]);
-    return value === doc[key];
-  });
-}
+import { aggregate, matches } from "./fixtures/aggregate.mjs";
 
 test("service routes use authorization, validation, CRUD, and capacity rules", async (t) => {
   const rows = [];
   const documents = {
     async insertOne(doc) { rows.push({ ...doc }); },
     async findOne(filter) { return rows.find((doc) => matches(doc, filter)) ?? null; },
-    async countDocuments(filter) { return rows.filter((doc) => matches(doc, filter)).length; },
+
     async findOneAndUpdate(filter, update) {
-      const doc = await this.findOne(filter);
+      const doc = rows.find((record) => matches(record, filter));
       return doc ? Object.assign(doc, update.$set) : null;
     },
     async deleteOne(filter) {
@@ -53,17 +46,11 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       rows.splice(index, 1);
       return { deletedCount: 1 };
     },
-    find(filter) {
-      let result = rows.filter((doc) => matches(doc, filter));
-      return {
-        sort() {
-          result.sort((a, b) => b.createdAt - a.createdAt || String(b._id).localeCompare(String(a._id)));
-          return this;
-        },
-        skip(count) { result = result.slice(count); return this; },
-        limit(count) { result = result.slice(0, count); return this; },
-        async toArray() { return result; },
-      };
+    aggregate(pipeline, options) {
+      assert.equal(options.readConcern.level, "snapshot");
+      const user = [...accounts.values()].map((account) => ({ ...account, _id: new ObjectId(account.id) }));
+      const result = aggregate(rows, pipeline, { user });
+      return { toArray: async () => result, next: async () => result[0] ?? null };
     },
   };
   const database = {
@@ -82,26 +69,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
             }));
           } };
         },
-        async findOneAndUpdate(filter, update, options) {
-          assert.ok(options.session);
-          assert.deepEqual(update, { $inc: { serviceCapacityVersion: 1 } });
-          const account = [...accounts.values()].find(({ id, role }) => filter._id.equals(id) && role === filter.role);
-          return account ?? null;
-        },
       };
-    },
-  };
-  // Simulates the serialization the shared vendor document provides in a real transaction.
-  let pending = Promise.resolve();
-  const client = {
-    withSession(callback) {
-      return callback({
-        withTransaction(operation) {
-          const result = pending.then(operation);
-          pending = result.catch(() => {});
-          return result;
-        },
-      });
     },
   };
   const auth = {
@@ -116,7 +84,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       internalAdapter: { findUserById: async (id) => [...accounts.values()].find((user) => user.id === id) },
     }),
   };
-  const server = createApp(auth, "http://localhost:3000", createServiceStore(client, database), undefined, undefined, {})
+  const server = createApp(auth, "http://localhost:3000", createServiceStore(database), undefined, undefined, {})
     .listen(0, "127.0.0.1");
   t.after(() => new Promise((resolve) => server.close(resolve)));
   await once(server, "listening");
@@ -138,7 +106,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
 
   await t.test("Admin service routes reject every non-admin actor", async () => {
     for (const [actor, status] of [[null, 401], ["customer", 403], ["vendor", 403], ["blocked-admin", 403]]) {
-      for (const [method, path, body] of [["GET", ""], ["GET", "/invalid"], ["PATCH", "/invalid", "{"], ["DELETE", "/invalid"]]) {
+      for (const [method, path, body] of [["GET", ""], ["GET", "/invalid"], ["PATCH", "/invalid", "{"], ["DELETE", "/invalid"], ["PATCH", "/invalid/moderation", { status: "approved" }]]) {
         assert.equal((await adminRequest(method, path, body, actor)).status, status);
       }
     }
@@ -159,6 +127,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       { ...fixture, title: "  " },
       { ...fixture, vendorId: accounts.get("admin").id },
       { ...fixture, subscriptionPlan: "premium" },
+      { ...fixture, moderationStatus: "approved" },
       "{invalid",
     ]) {
       const result = await request("POST", "", "vendor", body);
@@ -189,9 +158,17 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     const created = await request("POST", "", "vendor", fixture);
     assert.equal(created.status, 201);
     owned = (await created.json()).data;
-    assert.equal(created.headers.get("location"), "/api/services/" + owned.id);
+    assert.equal(created.headers.get("location"), "/api/services/manage/" + owned.id);
     assert.equal(owned.vendorId, accounts.get("vendor").id);
-    assert.equal(owned.isActive, true);
+    assert.equal(owned.isActive, false);
+    assert.equal(owned.vendorAvailable, true);
+    assert.equal(owned.moderationStatus, "pending");
+    assert.equal((await request("GET", "/" + owned.id)).status, 404);
+    assert.equal((await request("PATCH", "/" + owned.id, "vendor", { moderationStatus: "approved" })).status, 400);
+    assert.equal((await request("PATCH", "/" + owned.id, "vendor", { isActive: false })).status, 409);
+    const approved = await adminRequest("PATCH", "/" + owned.id + "/moderation", { status: "approved" });
+    assert.equal(approved.status, 200);
+    assert.equal((await approved.json()).data.isActive, true);
     assert.deepEqual(owned.images, [cover]);
     const createdDraft = await request("POST", "", "vendor", { ...fixture, title: "Draft", isActive: false, images: [cover, detailImage] });
     assert.equal(createdDraft.status, 201);
@@ -255,26 +232,78 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     assert.equal((await request("DELETE", "/" + draft.id, "admin")).status, 404);
   });
 
-  await t.test("caps concurrent free creates and reactivation while allowing drafts", async () => {
-    const results = await Promise.all(Array.from({ length: 5 }, () => request("POST", "", "vendor", fixture)));
-    assert.deepEqual(results.map(({ status }) => status).sort(), [201, 201, 409, 409, 409]);
-    const saved = await request("POST", "", "vendor", { ...fixture, isActive: false });
-    assert.equal(saved.status, 201);
-    const savedId = (await saved.json()).data.id;
-    for (const actor of ["vendor", "admin"]) {
-      assert.equal((await request("PATCH", "/" + savedId, actor, { isActive: true })).status, 409);
-    }
-    assert.equal((await request("PATCH", "/" + owned.id, "vendor", { isActive: false })).status, 200);
-    assert.equal((await request("PATCH", "/" + savedId, "vendor", { isActive: true })).status, 200);
-    assert.equal((await request("DELETE", "/" + savedId, "vendor")).status, 204);
-    assert.equal((await request("POST", "", "vendor", fixture)).status, 201);
+  await t.test("moderation, deletion, downgrade and renewal recompute the same publication policy", async () => {
+    const vendor = accounts.get("vendor");
+    const create = async (title) => {
+      const result = await request("POST", "", "vendor", { ...fixture, title });
+      assert.equal(result.status, 201);
+      return (await result.json()).data;
+    };
+    const decide = (id, status) => adminRequest("PATCH", "/" + id + "/moderation", { status });
+    const published = async () => {
+      const result = await request("GET");
+      assert.equal(result.status, 200);
+      return (await result.json()).data.map(({ id }) => id);
+    };
+
+    const first = await create("First new service");
+    const second = await create("Second new service");
+    const third = await create("Third new service");
+    const fourth = await create("Fourth new service");
+    const rejected = await create("Rejected service");
+    assert.deepEqual((await (await adminRequest("GET", "?moderationStatus=pending")).json()).data.length, 5);
+    assert.equal((await decide(rejected.id, "rejected")).status, 200);
+    assert.equal((await decide(rejected.id, "approved")).status, 409);
+    assert.equal((await request("PATCH", "/" + rejected.id, "vendor", { isActive: true })).status, 409);
+    assert.equal((await request("PATCH", "/" + rejected.id, "vendor", { price: 200 })).status, 200);
+    assert.equal((await request("GET", "/" + rejected.id)).status, 404);
+
+    const concurrent = await Promise.all([first, second, third].map(({ id }) => decide(id, "approved")));
+    assert.ok(concurrent.every(({ status }) => status === 200));
+    assert.deepEqual(await published(), [third.id, second.id, first.id]);
+    assert.equal((await decide(fourth.id, "approved")).status, 200);
+    assert.deepEqual(await published(), [fourth.id, third.id, second.id]);
+    assert.equal((await request("GET", "?q=First+new+service")).status, 200);
+    assert.equal((await (await request("GET", "?q=First+new+service")).json()).data.length, 0);
+    const older = (await (await request("GET", "/manage/" + first.id, "vendor")).json()).data;
+    assert.equal(older.moderationStatus, "approved");
+    assert.equal(older.vendorAvailable, true);
+    assert.equal(older.isActive, false);
+
+    assert.equal((await request("DELETE", "/" + fourth.id, "vendor")).status, 204);
+    assert.deepEqual(await published(), [third.id, second.id, first.id]);
+
+    vendor.subscriptionPlan = "premium";
+    vendor.subscriptionExpiresAt = new Date(Date.now() + 60_000);
+    assert.deepEqual(await published(), [third.id, second.id, first.id, owned.id]);
+    assert.equal((await request("PATCH", "/" + third.id, "vendor", { isActive: false })).status, 200);
+    assert.deepEqual(await published(), [second.id, first.id, owned.id]);
+    vendor.subscriptionExpiresAt = new Date(0);
+    assert.deepEqual(await published(), [second.id, first.id]);
+    assert.equal((await request("GET", "/" + owned.id)).status, 404);
+    assert.equal((await request("GET", "/" + third.id)).status, 404);
+    vendor.subscriptionExpiresAt = new Date(Date.now() + 60_000);
+    assert.deepEqual(await published(), [second.id, first.id, owned.id]);
+    const rejectionFilter = await adminRequest("GET", "?moderationStatus=rejected");
+    assert.deepEqual((await rejectionFilter.json()).data.map(({ id }) => id), [rejected.id]);
+    vendor.subscriptionPlan = "free";
+    delete vendor.subscriptionExpiresAt;
   });
 
-  await t.test("premium can exceed three while expired premium is capped", async () => {
-    for (let index = 0; index < 4; index++) {
-      assert.equal((await request("POST", "", "premium", fixture)).status, 201);
-      assert.equal((await request("POST", "", "expired", fixture)).status, index < 3 ? 201 : 409);
-    }
+  await t.test("only one competing Admin decision can change a pending submission", async () => {
+    const created = await request("POST", "", "vendor", fixture);
+    const { data: service } = await created.json();
+    assert.equal(created.status, 201);
+    const path = "/" + service.id + "/moderation";
+    assert.equal((await adminRequest("PATCH", path, { status: "pending" })).status, 400);
+    assert.equal((await adminRequest("PATCH", path, { status: "approved", vendorAvailable: true })).status, 400);
+    assert.equal((await adminRequest("PATCH", "/" + id() + "/moderation", { status: "approved" })).status, 404);
+    const decisions = await Promise.all(["approved", "rejected"].map((status) => adminRequest("PATCH", path, { status })));
+    assert.deepEqual(decisions.map(({ status }) => status).sort(), [200, 409]);
+    const winner = await decisions.find(({ status }) => status === 200).json();
+    const managed = await (await adminRequest("GET", "/" + service.id)).json();
+    assert.equal(managed.data.moderationStatus, winner.data.moderationStatus);
+    assert.equal(managed.data.isActive, winner.data.isActive);
   });
 
   await t.test("Admin service listing filters across vendors and returns only safe display fields", async () => {
@@ -300,8 +329,8 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       ["?q=FLOWERS", 1, ["Wedding flowers"]],
       ["?q=reception+portrait", 1, ["Portrait package"]],
       ["?q=.*", 0, []],
-      ["?category=pHoTo&visibility=active", 3, ["Photo C", "Photo B", "Photo A"]],
-      ["?visibility=inactive", 2, ["Unlinked service", "Portrait package"]],
+      ["?category=pHoTo&visibility=active", 2, ["Photo C", "Photo B"]],
+      ["?visibility=inactive", 3, ["Unlinked service", "Portrait package", "Photo A"]],
       ["?vendorId=" + other.vendorId.toUpperCase(), 1, ["Wedding flowers"]],
     ]) {
       const response = await adminRequest("GET", query);
@@ -337,7 +366,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       assert.deepEqual((await response.json()).data.images, []);
     }
     assert.equal("images" in active, false);
-    assert.equal((await adminRequest("PATCH", "/" + draft._id, { isActive: true })).status, 409);
+    assert.equal((await adminRequest("PATCH", "/" + draft._id, { isActive: true })).status, 200);
     for (const body of [{ vendorId: other.vendorId }, { isActive: "true" }, { title: "" }]) {
       assert.equal((await adminRequest("PATCH", "/" + draft._id, body)).status, 400);
     }

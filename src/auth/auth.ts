@@ -4,6 +4,7 @@ import { jwt } from "better-auth/plugins";
 
 import { client, getDatabase } from "../db/mongodb.js";
 import { accountOptions, authCollections, authDatabase, initialUserFields, userFields } from "./schema.js";
+import { profileUpdate } from "./profile.js";
 
 export type Role = "customer" | "vendor" | "admin";
 
@@ -62,6 +63,13 @@ export function createAuth(config: {
         });
         if (session?.user.isBlocked === true) {
           throw new APIError("FORBIDDEN", { message: "Account unavailable" });
+        }
+        if (context.path === "/update-user" && session) {
+          const changes = profileUpdate.safeParse(context.body);
+          if (!changes.success || (changes.data.businessName !== undefined && session.user.role !== "vendor")) {
+            throw new APIError("BAD_REQUEST", { message: "Invalid profile update" });
+          }
+          return { context: { body: changes.data } };
         }
       }),
     },

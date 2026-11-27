@@ -2,6 +2,7 @@ import { fromNodeHeaders } from "better-auth/node";
 import type { Request, RequestHandler } from "express";
 
 import type { Auth, Role } from "./auth.js";
+import { safeProfile } from "./profile.js";
 
 export function getRequestSession(auth: Auth, request: Request) {
   return auth.api.getSession({
@@ -42,7 +43,7 @@ export function requireBearerUser(auth: Auth, roles?: readonly Role[]): RequestH
       return;
     }
 
-    response.locals.profile = { id: user.id, name: user.name, email: user.email, role };
+    response.locals.profile = safeProfile(user, role);
     next();
   };
 }

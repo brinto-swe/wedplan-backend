@@ -5,6 +5,7 @@ import { toNodeHandler } from "better-auth/node";
 
 import type { Auth } from "./auth/auth.js";
 import { requireBearerUser } from "./auth/protection.js";
+import { profileRouter } from "./auth/profile-routes.js";
 import { createAdminRouter } from "./admin/routes.js";
 import type { AdminUserStore } from "./admin/store.js";
 import type { AdminTransactionStore } from "./admin/transactions.js";
@@ -33,13 +34,10 @@ export function createApp(
   app.all("/api/auth/*splat", toNodeHandler(auth));
   if (adminUsers) app.use("/api/admin", createAdminRouter(adminUsers, auth, services, adminTransactions, adminOverview));
   app.use("/api/uploads", imageUploadRouter(auth, imgbbApiKey));
+  app.use("/api/me", profileRouter(auth));
 
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
-
-  app.get("/api/me", requireBearerUser(auth), (_request, response) => {
-    response.json(response.locals.profile);
-  });
 
   app.use("/api/services", createServiceRouter(services, requireBearerUser(auth, ["vendor", "admin"])));
   app.use("/api/services", serviceErrors);

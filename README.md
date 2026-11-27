@@ -42,6 +42,12 @@ Vendor `POST /api/services` requires an ordered `images` array of 1–10 HTTPS i
 
 Public, Vendor, and Admin service responses include `images`. Existing documents without the field return `images: []` without a database migration.
 
+## Profile management
+
+`GET /api/me` returns the bearer-authenticated account's safe profile, including ID, name, email, role, image, verification status, and registration date. Vendor profiles also include `businessName`. Existing HTTPS avatars from social sign-in can still appear in reads.
+
+Unblocked Customers and Vendors can send a partial JSON update to `PATCH /api/me`. Use `name` for the display name, `image` for a URL returned by the image upload endpoint, and `image: null` to clear the avatar. Vendors may also update `businessName` or clear it with an empty string. The request requires at least one supported field, and the API returns the updated profile in the same shape as GET. New avatar URLs must be HTTPS on `i.ibb.co`. Account IDs, email, role, subscription, payment, and blocking fields are read-only here. Admin account reads and Admin management retain their existing authorization.
+
 ## Local development
 
 Use Node.js 24, run `npm ci`, and configure a local ignored `.env` from `.env.example`. Use `npm run dev` for watch mode or `npm run build` followed by `npm start` for the local production-style listener. The default local port is 5000. Run `npm run typecheck` and `npm test` to verify changes. The default suite uses test doubles. Keep `BOOKINGS_MONGO_INTEGRATION` unset when avoiding database writes.

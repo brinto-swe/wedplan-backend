@@ -1,12 +1,22 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { test } from "node:test";
+import { crc32 } from "node:zlib";
 
 import { createApp } from "../dist/src/app.js";
 
 const request = fetch;
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5CYAAAAASUVORK5CYII=", "base64");
+const maxImageBytes = 4 * 1024 * 1024;
 const image = (bytes = png, type = "image/png", name = "fixture.png") => ({ bytes, type, name });
+
+function paddedPng(size) {
+  const chunk = Buffer.alloc(size - png.length, "a");
+  chunk.writeUInt32BE(chunk.length - 12);
+  chunk.write("tEXtComment\0", 4);
+  chunk.writeUInt32BE(crc32(chunk.subarray(4, -4)), chunk.length - 4);
+  return Buffer.concat([png.subarray(0, -12), chunk, png.subarray(-12)]);
+}
 
 function multipart(...files) {
   const body = new FormData();
@@ -37,9 +47,10 @@ async function serve(t, key) {
   });
 }
 
-test("image uploads enforce authorization, validate the whole batch, and expose only safe ImgBB metadata", async (t) => {
+test("image uploads authorize one file per request and expose only safe ImgBB metadata", async (t) => {
   let calls = 0;
   let behavior = "success";
+  let expectedBytes = png;
   t.mock.method(globalThis, "fetch", async (endpoint, init) => {
     calls++;
     assert.equal(endpoint.origin + endpoint.pathname, "https://api.imgbb.com/1/upload");
@@ -50,7 +61,7 @@ test("image uploads enforce authorization, validate the whole batch, and expose 
     const file = init.body.get("image");
     assert.equal(file.name, "image.png");
     assert.equal(file.type, "image/png");
-    assert.deepEqual(Buffer.from(await file.arrayBuffer()), png);
+    assert.deepEqual(Buffer.from(await file.arrayBuffer()), expectedBytes);
     if (behavior === "failure") return Response.json({ error: "sensitive response" }, { status: 503 });
     if (behavior === "invalid-json") return new Response("sensitive response");
     return Response.json({ success: true, data: {
@@ -61,40 +72,49 @@ test("image uploads enforce authorization, validate the whole batch, and expose 
   const upload = await serve(t, "mock-key");
   const metadata = { url: "https://i.ibb.co/example/image.png", displayUrl: "https://i.ibb.co/example/display.png" };
 
-  await t.test("Vendor and Customer can upload images", async () => {
-    for (const [actor, count] of [["vendor", 2], ["customer", 1]]) {
-      const result = await upload(actor, multipart(...Array.from({ length: count }, () => image())));
+  await t.test("Vendor and Customer can make sequential independent single-image uploads", async () => {
+    for (const actor of ["vendor", "vendor", "customer", "customer"]) {
+      const result = await upload(actor, multipart(image()));
       assert.equal(result.status, 201);
       assert.equal(result.headers.get("cache-control"), "no-store");
-      assert.deepEqual(await result.json(), { data: Array(count).fill(metadata) });
+      assert.deepEqual(await result.json(), { data: [metadata] });
     }
-    assert.equal(calls, 3);
+    assert.equal(calls, 4);
   });
 
   await t.test("rejects anonymous, blocked, and Admin requests before parsing", async () => {
     for (const [actor, status] of [[null, 401], ["blocked", 403], ["admin", 403]]) {
       assert.equal((await upload(actor, "malformed")).status, status);
     }
-    assert.equal(calls, 3);
+    assert.equal(calls, 4);
   });
 
   await t.test("rejects invalid format, spoofed MIME, and malformed or empty forms", async () => {
-    assert.equal((await upload("vendor", multipart(image(), image(Buffer.from("GIF89a"), "image/gif")))).status, 415);
+    assert.equal((await upload("vendor", multipart(image(Buffer.from("GIF89a"), "image/gif")))).status, 415);
     assert.equal((await upload("vendor", multipart(image(Buffer.from("not an image"))))).status, 415);
     assert.equal((await upload("vendor", multipart(image(png, "image/jpeg", "spoof.jpg")))).status, 415);
     assert.equal((await upload("vendor", multipart(image(Buffer.alloc(0))))).status, 400);
     assert.equal((await upload("vendor", multipart())).status, 400);
     assert.equal((await upload("vendor", "bad", { "Content-Type": "multipart/form-data; boundary=broken" })).status, 400);
     assert.equal((await upload("vendor", "not multipart")).status, 415);
-    assert.equal(calls, 3);
+    assert.equal(calls, 4);
   });
 
-  await t.test("rejects per-file, file-count and total multipart limit violations", async () => {
-    assert.equal((await upload("customer", multipart(image(Buffer.alloc(5 * 1024 * 1024 + 1))))).status, 413);
-    assert.equal((await upload("customer", multipart(...Array.from({ length: 11 }, () => image())))).status, 413);
-    const tooLarge = multipart(...Array.from({ length: 4 }, () => image(Buffer.alloc(5 * 1024 * 1024))));
-    assert.equal((await upload("customer", tooLarge)).status, 413);
-    assert.equal(calls, 3);
+  await t.test("accepts 4 MiB, rejects one byte over, rejects two files, and caps the multipart body", async () => {
+    expectedBytes = paddedPng(maxImageBytes);
+    const boundary = await upload("customer", multipart(image(expectedBytes)));
+    assert.equal(boundary.status, 201);
+    assert.deepEqual(await boundary.json(), { data: [metadata] });
+    expectedBytes = png;
+    const oversized = await upload("customer", multipart(image(paddedPng(maxImageBytes + 1))));
+    assert.equal(oversized.status, 413);
+    assert.deepEqual(await oversized.json(), { error: "The image must be at most 4 MiB" });
+    assert.equal((await upload("customer", multipart(image(), image()))).status, 400);
+    const excessiveOverhead = multipart(image(paddedPng(maxImageBytes), "image/png", "a".repeat(70 * 1024) + ".png"));
+    const oversizedBody = await upload("customer", excessiveOverhead);
+    assert.equal(oversizedBody.status, 413);
+    assert.deepEqual(await oversizedBody.json(), { error: "Multipart body must be at most 4259840 bytes including overhead" });
+    assert.equal(calls, 5);
   });
 
   await t.test("sanitizes upstream failures and malformed responses", async () => {

@@ -30,11 +30,11 @@ See [Stripe subscriptions](#stripe-subscriptions) for Vercel billing configurati
 
 ## Image uploads
 
-`POST /api/uploads/images` requires a bearer token for an unblocked Vendor or Customer. Send `multipart/form-data` with one to ten file parts, each named `images`. The endpoint accepts JPEG, PNG, and WebP, with a 5 MiB limit per file and a 20 MiB limit including multipart overhead. It checks file signatures before sending any file to ImgBB. The upload uses the backend-only `IMGBB_API_KEY`.
+`POST /api/uploads/images` requires a bearer token for an unblocked Vendor or Customer. Send `multipart/form-data` with exactly one file part named `images`. The endpoint accepts JPEG, PNG, and WebP up to **4 MiB (4,194,304 bytes)**. It checks the file signature before sending the image to ImgBB. The upload uses the backend-only `IMGBB_API_KEY`.
 
-A successful request returns HTTP `201` with `{"data":[{"url":"https://i.ibb.co/example/image.png","displayUrl":"https://i.ibb.co/example/display.png"}]}`. `displayUrl` is optional. URLs are public and the application does not store them in this phase. If ImgBB fails partway through a batch, earlier files may already be hosted. The response is an error and no batch metadata is returned.
+A successful request returns HTTP `201` with `{"data":[{"url":"https://i.ibb.co/example/image.png","displayUrl":"https://i.ibb.co/example/display.png"}]}`. The `data` array contains one entry, and `displayUrl` is optional. URLs are public and the application does not store them in this phase.
 
-Vercel normally caps the entire request at 4.5 MB before Express receives it. Keep hosted requests below that limit including multipart overhead, and split smaller images across requests when needed. A single file above the hosted limit must be reduced before upload. This deployment does not require changing the Vercel payload setting.
+The multipart body is capped at **4,259,840 bytes (4 MiB + 64 KiB)** including overhead, below Vercel’s default 4.5 MB request limit. The endpoint returns `413` if either size limit is exceeded and `400` for zero or multiple file parts. To upload several images, send one request per image. Reduce any image larger than 4 MiB before uploading.
 
 ## Local development
 

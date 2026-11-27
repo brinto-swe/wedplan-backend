@@ -4,9 +4,8 @@ import { z } from "zod";
 import type { Auth } from "../auth/auth.js";
 import { requireBearerUser } from "../auth/protection.js";
 
-const maxImageBytes = 5 * 1024 * 1024;
-const maxRequestBytes = 20 * 1024 * 1024;
-const maxImages = 10;
+const maxImageBytes = 4 * 1024 * 1024;
+const maxRequestBytes = maxImageBytes + 64 * 1024;
 const pngSignature = Buffer.from("89504e470d0a1a0a", "hex");
 const pngEnd = Buffer.from("0000000049454e44ae426082", "hex");
 
@@ -46,31 +45,27 @@ const hostedImage = z.object({
   data: z.object({ url: imageUrl, display_url: imageUrl.nullish() }),
 });
 
-async function readImages(body: Buffer, contentType: string) {
+async function readImage(body: Buffer, contentType: string) {
   let form: FormData;
   try {
     form = await new Response(new Uint8Array(body), { headers: { "Content-Type": contentType } }).formData();
   } catch {
     throw new UploadError(400, "Malformed multipart upload");
   }
-  const files = [...form];
-  if (!files.length) throw new UploadError(400, "Provide at least one image");
-  if (files.length > maxImages) throw new UploadError(413, "Upload at most 10 images per request");
-
-  return Promise.all(files.map(async ([field, file]) => {
-    if (field !== "images" || typeof file === "string") {
-      throw new UploadError(400, "Use the images field for each image file");
-    }
-    if (file.size === 0) throw new UploadError(400, "Empty image files are not allowed");
-    if (file.size > maxImageBytes) throw new UploadError(413, "Images must be at most 5 MiB each");
-    const bytes = Buffer.from(await file.arrayBuffer());
-    const format = imageFormat(bytes);
-    if (!format || (file.type && file.type !== "application/octet-stream" &&
-      file.type !== format.mime && !(format.mime === "image/jpeg" && file.type === "image/jpg"))) {
-      throw new UploadError(415, "Use an actual JPEG, PNG or WebP image with a matching content type");
-    }
-    return { file: new Blob([bytes], { type: format.mime }), extension: format.extension };
-  }));
+  const entries = [...form];
+  const [field, file] = entries[0] ?? [];
+  if (entries.length !== 1 || field !== "images" || !file || typeof file === "string") {
+    throw new UploadError(400, "Provide exactly one image file in the images field");
+  }
+  if (file.size === 0) throw new UploadError(400, "Empty image files are not allowed");
+  if (file.size > maxImageBytes) throw new UploadError(413, "The image must be at most 4 MiB");
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const format = imageFormat(bytes);
+  if (!format || (file.type && file.type !== "application/octet-stream" &&
+    file.type !== format.mime && !(format.mime === "image/jpeg" && file.type === "image/jpg"))) {
+    throw new UploadError(415, "Use an actual JPEG, PNG or WebP image with a matching content type");
+  }
+  return { file: new Blob([bytes], { type: format.mime }), extension: format.extension };
 }
 
 export function imageUploadRouter(auth: Auth, apiKey?: string, fetchImage: typeof fetch = fetch) {
@@ -89,36 +84,35 @@ export function imageUploadRouter(auth: Auth, apiKey?: string, fetchImage: typeo
     express.raw({ type: "multipart/form-data", limit: maxRequestBytes, inflate: false }),
     async (request, response) => {
       if (!Buffer.isBuffer(request.body) || !request.body.length) {
-        throw new UploadError(400, "Provide at least one image");
+        throw new UploadError(400, "Provide exactly one image file in the images field");
       }
-      const images = await readImages(request.body, request.get("content-type") ?? "");
+      const image = await readImage(request.body, request.get("content-type") ?? "");
       const endpoint = new URL("https://api.imgbb.com/1/upload");
       endpoint.searchParams.set("key", key!);
-      const batchDeadline = AbortSignal.timeout(25_000);
-      const uploaded = [];
-      for (const image of images) {
-        const form = new FormData();
-        form.set("image", image.file, "image." + image.extension);
-        const signal = AbortSignal.any([batchDeadline, AbortSignal.timeout(8_000)]);
-        try {
-          const upstream = await fetchImage(endpoint, { method: "POST", body: form, redirect: "error", signal });
-          if (!upstream.ok) {
-            await upstream.body?.cancel();
-            throw new Error("Upload failed");
-          }
-          const parsed = hostedImage.parse(await upstream.json()).data;
-          uploaded.push({ url: parsed.url, ...(parsed.display_url && { displayUrl: parsed.display_url }) });
-        } catch {
-          if (signal.aborted) throw new UploadError(504, "Image hosting timed out");
-          throw new UploadError(502, "Image hosting could not complete the upload");
+      const form = new FormData();
+      form.set("image", image.file, "image." + image.extension);
+      const signal = AbortSignal.timeout(8_000);
+      let parsed: z.infer<typeof hostedImage>;
+      try {
+        const upstream = await fetchImage(endpoint, { method: "POST", body: form, redirect: "error", signal });
+        if (!upstream.ok) {
+          await upstream.body?.cancel();
+          throw new Error("Upload failed");
         }
+        parsed = hostedImage.parse(await upstream.json());
+      } catch {
+        if (signal.aborted) throw new UploadError(504, "Image hosting timed out");
+        throw new UploadError(502, "Image hosting could not complete the upload");
       }
-      response.status(201).json({ data: uploaded });
+      const { url, display_url: displayUrl } = parsed.data;
+      response.status(201).json({ data: [{ url, ...(displayUrl && { displayUrl }) }] });
     },
   );
   const uploadErrors: ErrorRequestHandler = (error, _request, response, next) => {
     if (error instanceof UploadError) response.status(error.status).json({ error: error.message });
-    else if (error?.type === "entity.too.large") response.status(413).json({ error: "Multipart uploads must be at most 20 MiB" });
+    else if (error?.type === "entity.too.large") {
+      response.status(413).json({ error: `Multipart body must be at most ${maxRequestBytes} bytes including overhead` });
+    }
     else if (error?.type === "encoding.unsupported") response.status(415).json({ error: "Compressed uploads are not supported" });
     else if (error?.type === "request.size.invalid" || error?.type === "request.aborted") {
       response.status(400).json({ error: "Malformed multipart upload" });

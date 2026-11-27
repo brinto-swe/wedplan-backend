@@ -254,6 +254,20 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       return (await result.json()).data.map(({ id }) => id);
     };
 
+    const checkBadge = async (id, expected) => {
+      const listing = await request("GET");
+      const detail = await request("GET", "/" + id, "customer");
+      assert.equal(listing.status, 200);
+      assert.equal(detail.status, 200);
+      const card = (await listing.json()).data.find((service) => service.id === id);
+      for (const service of [card, (await detail.json()).data]) {
+        assert.equal(service.vendorPremium, expected);
+        for (const field of ["subscriptionPlan", "subscriptionExpiresAt", "paidThrough", "customerId", "paymentMethod", "subscription"]) {
+          assert.equal(field in service, false);
+        }
+      }
+    };
+
     const first = await create("First new service");
     const second = await create("Second new service");
     const third = await create("Third new service");
@@ -269,6 +283,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     const concurrent = await Promise.all([first, second, third].map(({ id }) => decide(id, "approved")));
     assert.ok(concurrent.every(({ status }) => status === 200));
     assert.deepEqual(await published(), [third.id, second.id, first.id]);
+    await checkBadge(second.id, false);
     assert.equal((await decide(fourth.id, "approved")).status, 200);
     assert.deepEqual(await published(), [fourth.id, third.id, second.id]);
     assert.equal((await request("GET", "?q=First+new+service")).status, 200);
@@ -285,18 +300,22 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     vendor.subscriptionPlan = "premium";
     vendor.subscriptionExpiresAt = new Date(Date.now() + 60_000);
     assert.deepEqual(await published(), [third.id, second.id, first.id, owned.id]);
+    await checkBadge(second.id, true);
     assert.equal((await request("PATCH", "/" + third.id, "vendor", { isActive: false })).status, 200);
     assert.deepEqual(await published(), [second.id, first.id, owned.id]);
     vendor.subscriptionExpiresAt = new Date(0);
     assert.deepEqual(await published(), [second.id, first.id]);
+    await checkBadge(second.id, false);
     assert.equal((await request("GET", "/" + owned.id, "customer")).status, 404);
     assert.equal((await request("GET", "/" + third.id, "customer")).status, 404);
     vendor.subscriptionExpiresAt = new Date(Date.now() + 60_000);
     assert.deepEqual(await published(), [second.id, first.id, owned.id]);
+    await checkBadge(second.id, true);
     const rejectionFilter = await adminRequest("GET", "?moderationStatus=rejected");
     assert.deepEqual((await rejectionFilter.json()).data.map(({ id }) => id), [rejected.id]);
     vendor.subscriptionPlan = "free";
     delete vendor.subscriptionExpiresAt;
+    await checkBadge(second.id, false);
   });
 
   await t.test("only one competing Admin decision can change a pending submission", async () => {

@@ -13,7 +13,7 @@ type StoredService = Omit<ServiceInput, "images"> & {
   moderationStatus?: ModerationStatus;
 };
 
-export type Service = StoredService & { moderationStatus: ModerationStatus; vendorAvailable: boolean };
+export type Service = StoredService & { moderationStatus: ModerationStatus; vendorAvailable: boolean; vendorPremium?: boolean };
 export type ServiceManager = { id: string; role: "vendor" | "admin" };
 
 export class ServiceError extends Error {

@@ -33,13 +33,14 @@ export function publicationStages(now = new Date()): Document[] {
       ],
       as: "publicationVendor",
     } },
+    { $set: { vendorPremium: { $in: [true, "$publicationVendor.premium"] } } },
     { $set: { isActive: { $and: [
       { $eq: ["$moderationStatus", "approved"] },
       "$vendorAvailable",
       { $gt: [{ $size: "$publicationVendor" }, 0] },
       { $or: [
         { $lte: ["$publicationRank", 3] },
-        { $in: [true, "$publicationVendor.premium"] },
+        "$vendorPremium",
       ] },
     ] } } },
     { $unset: ["publicationRank", "publicationVendorId", "publicationVendor"] },

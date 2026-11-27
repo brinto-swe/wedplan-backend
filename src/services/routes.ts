@@ -8,6 +8,10 @@ export function serializeService({ _id, title, description, category, price, loc
   return { id: _id.toHexString(), title, description, category, price, location, isActive, vendorId, createdAt, updatedAt, images, moderationStatus, vendorAvailable };
 }
 
+function serializePublicService(service: Service & { vendorName?: string }) {
+  return { ...serializeService(service), vendorName: service.vendorName, vendorPremium: service.vendorPremium === true };
+}
+
 export function createServiceManagementHandlers(store: ServiceStore) {
   const detail: RequestHandler = async (request, response) => {
     const manager: ServiceManager = response.locals.profile;
@@ -36,7 +40,7 @@ export function createServiceRouter(store: ServiceStore, authenticate: RequestHa
 
   router.get("/", async (request, response) => {
     const result = await store.listPublic(publicQuery.parse(request.query));
-    response.json({ data: result.data.map((service) => ({ ...serializeService(service), vendorName: service.vendorName })), pagination: result.pagination });
+    response.json({ data: result.data.map(serializePublicService), pagination: result.pagination });
   });
 
   router.get("/manage", authorize, async (request, response) => {
@@ -50,7 +54,7 @@ export function createServiceRouter(store: ServiceStore, authenticate: RequestHa
   router.get("/:id", authenticate, async (request, response) => {
     const service = await store.findPublic(serviceId.parse(request.params.id));
     if (!service) throw new ServiceError(404, "Service not found");
-    response.json({ data: serializeService(service) });
+    response.json({ data: serializePublicService(service) });
   });
 
   router.post("/", authorize, async (request, response) => {

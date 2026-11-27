@@ -36,7 +36,7 @@ export function createServiceRouter(store: ServiceStore, authenticate: RequestHa
 
   router.get("/", async (request, response) => {
     const result = await store.listPublic(publicQuery.parse(request.query));
-    response.json({ data: result.data.map(serializeService), pagination: result.pagination });
+    response.json({ data: result.data.map((service) => ({ ...serializeService(service), vendorName: service.vendorName })), pagination: result.pagination });
   });
 
   router.get("/manage", authorize, async (request, response) => {

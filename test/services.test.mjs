@@ -416,11 +416,17 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       ["?sort=price-asc&page=2&limit=2", ["Portrait A", "Venue"], 4],
       ["?q=portrait&sort=price-desc", ["Portrait B", "Portrait A", "Portrait C"], 3],
       ["?category=Photo&location=shanghai&sort=price-asc", ["Portrait B", "Portrait A"], 2],
+      ["?category=Photography%20%26%20Videography&location=shanghai&sort=price-asc", ["Portrait B", "Portrait A"], 2],
+      ["?category=Wedding%20Venues", ["Venue"], 1],
     ]) {
       const response = await request("GET", query);
       assert.equal(response.status, 200);
       const { data, pagination } = await response.json();
       assert.deepEqual(data.map(({ title }) => title), titles);
+      for (const service of data) {
+        assert.equal(service.vendorName, "Wedding Studio");
+        for (const field of ["email", "password", "seedMarker"]) assert.equal(field in service, false);
+      }
       assert.equal(pagination.total, total);
     }
     for (const query of ["?sort=unsupported", "?sort=price-asc&sort=price-desc"]) {

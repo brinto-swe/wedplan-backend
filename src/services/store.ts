@@ -24,6 +24,15 @@ export class ServiceError extends Error {
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+const publicCategoryAliases = [
+  ["Photography & Videography", "Photography", "Videography", "Photo"],
+  ["Wedding Venues", "Venues", "Venue"],
+  ["Decoration & Florist", "Decoration", "Florals", "Florist"],
+  ["Catering Services", "Catering"],
+  ["Makeup & Styling", "Makeup"],
+  ["Wedding Fashion", "Bridal Wear", "Attire"],
+] as const;
+
 function searchFilter({ q, category }: Pick<ListQuery, "q" | "category">): Filter<Service> {
   const filter: Filter<Service> = {};
   if (category) filter.category = new RegExp(`^${escapeRegex(category)}$`, "i");
@@ -72,10 +81,19 @@ export function createServiceStore(db: Db) {
   }
 
   return {
-    listPublic(query: ListQuery) {
+    async listPublic(query: ListQuery) {
       const filter: Filter<Service> = { ...searchFilter(query), isActive: true };
       if (query.location) filter.location = new RegExp(`^${escapeRegex(query.location)}$`, "i");
-      return list(filter, query);
+      if (query.category) {
+        const aliases = publicCategoryAliases.find(([name]) => name.toLowerCase() === query.category?.toLowerCase());
+        if (aliases) filter.category = new RegExp(`^(?:${aliases.map(escapeRegex).join("|")})$`, "i");
+      }
+      const result = await list(filter, query);
+      const vendors = await findVendorDisplay(db, result.data.map(({ vendorId }) => vendorId));
+      return { ...result, data: result.data.map((service) => {
+        const vendor = vendors.get(service.vendorId);
+        return { ...service, vendorName: vendor?.businessName ?? vendor?.name };
+      }) };
     },
 
     async listAdmin(query: AdminServiceQuery) {

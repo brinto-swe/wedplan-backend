@@ -24,6 +24,36 @@ test("profile routes use Better Auth sessions, persist approved changes, and pre
   await once(server, "listening");
   const base = "http://127.0.0.1:" + server.address().port;
 
+  await t.test("public signup enforces the assignment password rules and keeps the image optional", async () => {
+    const cases = [
+      ["customer", "Abc123", undefined, "customer"],
+      ["vendor", "Abcde1", avatar, "vendor"],
+      ["admin", "Abcdef", undefined, "customer"],
+      ["customer", "abcdef", undefined, null],
+      ["vendor", "ABCDEF", undefined, null],
+      ["customer", "Ab123", undefined, null],
+    ];
+    for (const [index, [role, password, image, expectedRole]] of cases.entries()) {
+      const email = `signup-${index}@example.test`;
+      const response = await fetch(base + "/api/auth/sign-up/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: origin },
+        body: JSON.stringify({ name: "Signup fixture", email, password, role, image }),
+      });
+      assert.equal(response.status, expectedRole ? 200 : 400);
+      const result = await response.json();
+      const user = db.user.find((entry) => entry.email === email);
+      if (expectedRole) {
+        assert.equal(result.user.role, expectedRole);
+        assert.equal(user.role, expectedRole);
+        assert.equal(user.image ?? null, image ?? null);
+      } else {
+        assert.equal(result.code, "SIGNUP_PASSWORD_REQUIREMENTS");
+        assert.equal(user, undefined);
+      }
+    }
+  });
+
   async function account(role, label = role) {
     const email = label + "@example.test";
     const body = { name: label, email, password: "Synthetic!Fixture2026", role: role === "vendor" ? role : "customer" };

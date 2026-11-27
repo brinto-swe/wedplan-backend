@@ -21,7 +21,7 @@ export function createAuth(config: {
     secret: config.secret,
     trustedOrigins: [config.origin],
     database,
-    emailAndPassword: { enabled: true },
+    emailAndPassword: { enabled: true, minPasswordLength: 6 },
     socialProviders: { google: config.google, github: config.github },
     account: accountOptions,
     user: {
@@ -56,6 +56,15 @@ export function createAuth(config: {
     },
     hooks: {
       before: createAuthMiddleware(async (context) => {
+        if (context.path === "/sign-up/email") {
+          const password: unknown = context.body?.password;
+          if (typeof password === "string" && (password.length < 6 || !/[A-Z]/.test(password) || !/[a-z]/.test(password))) {
+            throw new APIError("BAD_REQUEST", {
+              code: "SIGNUP_PASSWORD_REQUIREMENTS",
+              message: "Use at least 6 characters, including an uppercase (A–Z) and a lowercase (a–z) letter.",
+            });
+          }
+        }
         if (!context.headers?.has("cookie") || context.path === "/sign-out") return;
         const session = await getSessionFromCtx(context, {
           disableCookieCache: true,

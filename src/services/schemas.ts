@@ -30,6 +30,7 @@ const pagination = z.strictObject({
 export const publicQuery = pagination.extend({
   category: text(80).optional(),
   location: text(120).optional(),
+  sort: z.enum(["newest", "price-asc", "price-desc"]).optional(),
   q: text(120).optional(),
 });
 export const managementQuery = pagination;

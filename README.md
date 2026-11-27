@@ -48,7 +48,7 @@ New Vendor services start with moderationStatus set to pending. Admins can filte
 
 Service responses include moderationStatus, vendorAvailable (the saved preference), and isActive (effective public visibility). Create and update payloads retain isActive as the availability input. Availability can be changed after approval. Content edits do not change moderation status. Older records without moderation status are treated as Approved, with their stored availability preserved.
 
-Public listings, authenticated service details, and booking eligibility use the same snapshot calculation. GET /api/services remains public. GET /api/services/:id requires a bearer token from an unblocked account. Free Vendors' three newest Approved services are eligible, ordered by creation time and ID. Paused services remain off even within those three. Premium makes all Approved services eligible while paid coverage lasts. Losing eligibility never deletes a service. Publication queries require MongoDB 5.3 or later.
+Public listings, authenticated service details, and booking eligibility use the same snapshot calculation. GET /api/services remains public and accepts sort=newest (default), sort=price-asc, or sort=price-desc. Price ties are ordered newest first, then by descending service ID. GET /api/services/:id requires a bearer token from an unblocked account. Free Vendors' three newest Approved services are eligible, ordered by creation time and ID. Paused services remain off even within those three. Premium makes all Approved services eligible while paid coverage lasts. Losing eligibility never deletes a service. Publication queries require MongoDB 5.3 or later.
 
 ## Profile management
 

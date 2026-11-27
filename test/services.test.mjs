@@ -393,4 +393,38 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
       assert.equal((await adminRequest(method, "/invalid", method === "PATCH" ? { isActive: true } : undefined)).status, 400);
     }
   });
+
+  await t.test("sorts eligible public services by price before pagination with stable ties", async () => {
+    rows.length = 0;
+    const day = new Date("2025-01-01");
+    const add = (title, price, fields = {}) => rows.push({
+      ...fixture, _id: new ObjectId(), vendorId: accounts.get("premium").id, title,
+      price, isActive: true, moderationStatus: "approved", createdAt: day, updatedAt: day, ...fields,
+    });
+    add("Portrait A", 30);
+    add("Portrait B", 30);
+    add("Portrait C", 10, { location: "Dhaka" });
+    add("Venue", 70, { category: "Venue" });
+    add("Pending", 1, { moderationStatus: "pending" });
+    add("Rejected", 2, { moderationStatus: "rejected" });
+    add("Inactive", 3, { isActive: false });
+
+    for (const [query, titles, total] of [
+      ["", ["Venue", "Portrait C", "Portrait B", "Portrait A"], 4],
+      ["?sort=price-asc", ["Portrait C", "Portrait B", "Portrait A", "Venue"], 4],
+      ["?sort=price-desc", ["Venue", "Portrait B", "Portrait A", "Portrait C"], 4],
+      ["?sort=price-asc&page=2&limit=2", ["Portrait A", "Venue"], 4],
+      ["?q=portrait&sort=price-desc", ["Portrait B", "Portrait A", "Portrait C"], 3],
+      ["?category=Photo&location=shanghai&sort=price-asc", ["Portrait B", "Portrait A"], 2],
+    ]) {
+      const response = await request("GET", query);
+      assert.equal(response.status, 200);
+      const { data, pagination } = await response.json();
+      assert.deepEqual(data.map(({ title }) => title), titles);
+      assert.equal(pagination.total, total);
+    }
+    for (const query of ["?sort=unsupported", "?sort=price-asc&sort=price-desc"]) {
+      assert.equal((await request("GET", query)).status, 400);
+    }
+  });
 });

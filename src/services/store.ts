@@ -1,4 +1,4 @@
-import { ObjectId, type Db, type Filter } from "mongodb";
+import { ObjectId, type Db, type Filter, type Sort } from "mongodb";
 
 import { findVendorDisplay } from "../auth/vendor-display.js";
 import { newestServices, publicationStages, type ModerationStatus } from "./publication.js";
@@ -38,17 +38,23 @@ function ownership(manager: ServiceManager): Filter<StoredService> {
   return manager.role === "admin" ? {} : { vendorId: manager.id };
 }
 
+const publicServiceOrder = {
+  newest: newestServices,
+  "price-asc": { price: 1, ...newestServices },
+  "price-desc": { price: -1, ...newestServices },
+} as const satisfies Record<NonNullable<ListQuery["sort"]>, Sort>;
+
 export function createServiceStore(db: Db) {
   const services = db.collection<StoredService>("services");
   const snapshot = { readConcern: { level: "snapshot" } } as const;
 
-  async function list(filter: Filter<Service>, { page, limit }: ListQuery, vendorId?: string) {
+  async function list(filter: Filter<Service>, { page, limit, sort }: ListQuery, vendorId?: string) {
     const [result] = await services.aggregate<{ data: Service[]; count: { total: number }[] }>([
       ...(vendorId ? [{ $match: { vendorId } }] : []),
       ...publicationStages(),
       { $match: filter },
       { $facet: {
-        data: [{ $sort: newestServices }, { $skip: (page - 1) * limit }, { $limit: limit }],
+        data: [{ $sort: publicServiceOrder[sort ?? "newest"] }, { $skip: (page - 1) * limit }, { $limit: limit }],
         count: [{ $count: "total" }],
       } },
     ], snapshot).toArray();

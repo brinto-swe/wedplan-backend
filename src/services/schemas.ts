@@ -1,7 +1,9 @@
 import { ObjectId } from "mongodb";
 import { z } from "zod";
+import { hostedImageUrl } from "../uploads/image-url.js";
 
 const text = (max: number) => z.string().trim().min(1).max(max);
+const serviceImages = z.array(hostedImageUrl).max(10, "Use at most 10 images");
 const serviceFields = z.strictObject({
   title: text(120),
   description: text(5000),
@@ -9,9 +11,11 @@ const serviceFields = z.strictObject({
   price: z.number().min(0).max(1_000_000_000),
   location: text(120),
   isActive: z.boolean(),
+  images: serviceImages,
 });
 
 export const createService = serviceFields.partial({ isActive: true })
+  .extend({ images: serviceImages.min(1, "Provide at least one image") })
   .transform((input) => ({ ...input, isActive: input.isActive ?? true }));
 export const updateService = serviceFields.partial()
   .refine((input) => Object.keys(input).length > 0, "Provide at least one field");

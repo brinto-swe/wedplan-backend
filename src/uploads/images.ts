@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import type { Auth } from "../auth/auth.js";
 import { requireBearerUser } from "../auth/protection.js";
+import { hostedImageUrl } from "./image-url.js";
 
 const maxImageBytes = 4 * 1024 * 1024;
 const maxRequestBytes = maxImageBytes + 64 * 1024;
@@ -33,16 +34,9 @@ function imageFormat(bytes: Buffer) {
   }
 }
 
-function httpsImageUrl(value: string) {
-  const url = URL.parse(value);
-  return url?.protocol === "https:" && url.host === "i.ibb.co" &&
-    !url.username && !url.password && !url.search && !url.hash && url.pathname !== "/";
-}
-
-const imageUrl = z.string().max(2048).refine(httpsImageUrl);
 const hostedImage = z.object({
   success: z.literal(true),
-  data: z.object({ url: imageUrl, display_url: imageUrl.nullish() }),
+  data: z.object({ url: hostedImageUrl, display_url: hostedImageUrl.nullish() }),
 });
 
 async function readImage(body: Buffer, contentType: string) {

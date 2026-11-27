@@ -214,6 +214,7 @@ test("Stripe payment HTTP routes, signed webhooks, transactional reconciliation 
   const preservedCredential = structuredClone(rows.account[0]);
   const createService = () => serviceStore.create({ id: vendorId, role: "vendor" }, {
     title: "Service", category: "Photo", description: "A wedding service", price: 100, location: "London", isActive: true,
+    images: ["https://i.ibb.co/fixture/cover.webp"],
   });
 
   await t.test("only vendors can access payments and checkout uses the server price", async () => {

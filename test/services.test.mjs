@@ -17,12 +17,15 @@ const accounts = new Map([
   ["blocked-admin", { id: id(), role: "admin", isBlocked: true }],
 ]);
 
+const cover = "https://i.ibb.co/fixture/cover.webp";
+const detailImage = "https://i.ibb.co/fixture/detail.png";
 const fixture = {
   title: "Wedding photography",
   description: "Full day photography",
   category: "Photo",
   price: 350,
   location: "Shanghai",
+  images: [cover],
 };
 
 function matches(doc, filter) {
@@ -167,6 +170,21 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     }
   });
 
+  await t.test("requires a nonempty list of approved hosted images on creation", async () => {
+    const invalid = [
+      undefined, [], Array(11).fill(cover), [""], ["not-a-url"], ["https:i.ibb.co/fixture/a.png"],
+      ["http://i.ibb.co/fixture/a.png"], ["https://unapproved.example/a.png"],
+      ["https://i.ibb.co.example/a.png"], ["https://user:password@i.ibb.co/a.png"],
+      ["https://i.ibb.co/a.png?private=fixture"],
+    ];
+    for (const value of invalid) {
+      const response = await request("POST", "", "vendor", { ...fixture, images: value });
+      assert.equal(response.status, 400);
+      assert.ok((await response.json()).issues.some(({ path }) => path === "images" || path.startsWith("images.")));
+    }
+    assert.equal(rows.length, 0);
+  });
+
   await t.test("creates services and limits public search and detail to active services", async () => {
     const created = await request("POST", "", "vendor", fixture);
     assert.equal(created.status, 201);
@@ -174,16 +192,52 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     assert.equal(created.headers.get("location"), "/api/services/" + owned.id);
     assert.equal(owned.vendorId, accounts.get("vendor").id);
     assert.equal(owned.isActive, true);
-    draft = (await (await request("POST", "", "vendor", { ...fixture, title: "Draft", isActive: false })).json()).data;
-    assert.equal((await request("GET", "/" + owned.id)).status, 200);
+    assert.deepEqual(owned.images, [cover]);
+    const createdDraft = await request("POST", "", "vendor", { ...fixture, title: "Draft", isActive: false, images: [cover, detailImage] });
+    assert.equal(createdDraft.status, 201);
+    draft = (await createdDraft.json()).data;
+    assert.deepEqual(draft.images, [cover, detailImage]);
+    const publicDetail = await request("GET", "/" + owned.id);
+    assert.equal(publicDetail.status, 200);
+    assert.deepEqual((await publicDetail.json()).data.images, [cover]);
     assert.equal((await request("GET", "/" + draft.id)).status, 404);
-    assert.equal((await request("GET", "/manage/" + draft.id, "vendor")).status, 200);
+    const vendorDetail = await request("GET", "/manage/" + draft.id, "vendor");
+    assert.equal(vendorDetail.status, 200);
+    assert.deepEqual((await vendorDetail.json()).data.images, [cover, detailImage]);
     assert.equal((await request("GET", "/manage/" + draft.id, "admin")).status, 200);
     assert.equal((await request("GET", "/manage/" + draft.id, "premium")).status, 404);
     const listing = await (await request("GET", "?q=photography&category=photo&location=shanghai&limit=1")).json();
     assert.deepEqual(listing.pagination, { page: 1, limit: 1, total: 1, totalPages: 1 });
     assert.deepEqual(listing.data.map(({ id }) => id), [owned.id]);
+    assert.deepEqual(listing.data[0].images, [cover]);
     assert.equal((await (await request("GET", "?q=.*")).json()).data.length, 0);
+  });
+
+  await t.test("updates the ordered image array, preserves omitted images, and enforces ownership", async () => {
+    const path = "/" + owned.id;
+    const patch = { images: [detailImage, cover] };
+    for (const [actor, status] of [[null, 401], ["customer", 403], ["blocked", 403], ["premium", 404]]) {
+      assert.equal((await request("PATCH", path, actor, patch)).status, status);
+    }
+    for (const images of [Array(11).fill(cover), [cover, "https://unapproved.example/a.png"]]) {
+      assert.equal((await request("PATCH", path, "vendor", { images })).status, 400);
+    }
+    assert.deepEqual((await (await request("GET", path)).json()).data.images, [cover]);
+    const updated = await request("PATCH", path, "vendor", patch);
+    assert.equal(updated.status, 200);
+    assert.deepEqual((await updated.json()).data.images, patch.images);
+    const unchanged = await request("PATCH", path, "vendor", { price: 375 });
+    assert.equal(unchanged.status, 200);
+    assert.deepEqual((await unchanged.json()).data.images, patch.images);
+    const managed = (await (await request("GET", "/manage", "vendor")).json()).data;
+    assert.deepEqual(managed.find(({ id }) => id === owned.id).images, patch.images);
+    const replaced = await adminRequest("PATCH", path, { images: [detailImage] });
+    assert.equal(replaced.status, 200);
+    assert.deepEqual((await replaced.json()).data.images, [detailImage]);
+    const removed = await request("PATCH", path, "vendor", { images: [] });
+    assert.equal(removed.status, 200);
+    assert.deepEqual((await removed.json()).data.images, []);
+    assert.deepEqual((await (await request("GET", path)).json()).data.images, []);
   });
 
   await t.test("enforces ownership and lets admins manage every service", async () => {
@@ -236,6 +290,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     add("vendor", "Photo A", "Photo", true, 1);
     add("vendor", "Photo B", "Photo", true, 2);
     const active = add("vendor", "Photo C", "Photo", true, 3);
+    delete active.images;
     const draft = add("vendor", "Portrait package", "Photo", false, 4);
     const other = add("premium", "Wedding flowers", "Florist", true, 5);
     const missingVendor = add("missing", "Unlinked service", "Other", false, 6);
@@ -260,6 +315,7 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
         assert.deepEqual(entry.vendor, entry.id === String(missingVendor._id) ? null : {
           id: entry.vendorId, name: "Vendor display name", businessName: "Wedding Studio",
         });
+        assert.deepEqual(entry.images, entry.id === String(active._id) ? [] : [cover]);
       }
     }
     for (const query of ["?vendorId=not-an-id", "?visibility=pending", "?limit=101", "?page=0", "?category=", "?q=a&q=b", "?owner=admin"]) {
@@ -271,6 +327,16 @@ test("service routes use authorization, validation, CRUD, and capacity rules", a
     const detail = await adminRequest("GET", "/" + draft._id);
     assert.equal(detail.status, 200);
     assert.equal((await detail.json()).data.isActive, false);
+    for (const response of [
+      await request("GET", "/" + active._id),
+      await request("GET", "/manage/" + active._id, "vendor"),
+      await adminRequest("GET", "/" + active._id),
+      await adminRequest("PATCH", "/" + active._id, { description: "Legacy service edit" }),
+    ]) {
+      assert.equal(response.status, 200);
+      assert.deepEqual((await response.json()).data.images, []);
+    }
+    assert.equal("images" in active, false);
     assert.equal((await adminRequest("PATCH", "/" + draft._id, { isActive: true })).status, 409);
     for (const body of [{ vendorId: other.vendorId }, { isActive: "true" }, { title: "" }]) {
       assert.equal((await adminRequest("PATCH", "/" + draft._id, body)).status, 400);

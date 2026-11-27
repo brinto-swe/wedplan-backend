@@ -36,6 +36,12 @@ A successful request returns HTTP `201` with `{"data":[{"url":"https://i.ibb.co/
 
 The multipart body is capped at **4,259,840 bytes (4 MiB + 64 KiB)** including overhead, below Vercel’s default 4.5 MB request limit. The endpoint returns `413` if either size limit is exceeded and `400` for zero or multiple file parts. To upload several images, send one request per image. Reduce any image larger than 4 MiB before uploading.
 
+### Service image persistence
+
+Vendor `POST /api/services` requires an ordered `images` array of 1–10 HTTPS image URLs from `i.ibb.co`. Upload each file first, then send the returned URL in that array. Service PATCH requests, including Admin updates, preserve images when the field is omitted. Send a complete replacement array to add, remove, or reorder images. An empty array clears the service’s image references. Updating the record does not delete files from ImgBB.
+
+Public, Vendor, and Admin service responses include `images`. Existing documents without the field return `images: []` without a database migration.
+
 ## Local development
 
 Use Node.js 24, run `npm ci`, and configure a local ignored `.env` from `.env.example`. Use `npm run dev` for watch mode or `npm run build` followed by `npm start` for the local production-style listener. The default local port is 5000. Run `npm run typecheck` and `npm test` to verify changes. The default suite uses test doubles. Keep `BOOKINGS_MONGO_INTEGRATION` unset when avoiding database writes.

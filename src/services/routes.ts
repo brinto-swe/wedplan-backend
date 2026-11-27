@@ -4,8 +4,8 @@ import { z } from "zod";
 import { createService, managementQuery, publicQuery, serviceId, updateService } from "./schemas.js";
 import { ServiceError, type Service, type ServiceManager, type ServiceStore } from "./store.js";
 
-export function serializeService({ _id, title, description, category, price, location, isActive, vendorId, createdAt, updatedAt }: Service) {
-  return { id: _id.toHexString(), title, description, category, price, location, isActive, vendorId, createdAt, updatedAt };
+export function serializeService({ _id, title, description, category, price, location, isActive, vendorId, createdAt, updatedAt, images = [] }: Service) {
+  return { id: _id.toHexString(), title, description, category, price, location, isActive, vendorId, createdAt, updatedAt, images };
 }
 
 export function createServiceManagementHandlers(store: ServiceStore) {

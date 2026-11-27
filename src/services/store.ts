@@ -5,8 +5,9 @@ import { findVendorDisplay } from "../auth/vendor-display.js";
 import { hasPremiumEntitlement } from "../payments/entitlement.js";
 import type { AdminServiceQuery, ListQuery, ServiceInput } from "./schemas.js";
 
-export type Service = ServiceInput & {
+export type Service = Omit<ServiceInput, "images"> & {
   _id: ObjectId;
+  images?: string[];
   vendorId: string;
   createdAt: Date;
   updatedAt: Date;

@@ -28,6 +28,14 @@ After a manual deployment, check `GET /api/auth/ok` and `GET /api/services` for 
 
 See [Stripe subscriptions](#stripe-subscriptions) for Vercel billing configuration.
 
+## Image uploads
+
+`POST /api/uploads/images` requires a bearer token for an unblocked Vendor or Customer. Send `multipart/form-data` with one to ten file parts, each named `images`. The endpoint accepts JPEG, PNG, and WebP, with a 5 MiB limit per file and a 20 MiB limit including multipart overhead. It checks file signatures before sending any file to ImgBB. The upload uses the backend-only `IMGBB_API_KEY`.
+
+A successful request returns HTTP `201` with `{"data":[{"url":"https://i.ibb.co/example/image.png","displayUrl":"https://i.ibb.co/example/display.png"}]}`. `displayUrl` is optional. URLs are public and the application does not store them in this phase. If ImgBB fails partway through a batch, earlier files may already be hosted. The response is an error and no batch metadata is returned.
+
+Vercel normally caps the entire request at 4.5 MB before Express receives it. Keep hosted requests below that limit including multipart overhead, and split smaller images across requests when needed. A single file above the hosted limit must be reduced before upload. This deployment does not require changing the Vercel payload setting.
+
 ## Local development
 
 Use Node.js 24, run `npm ci`, and configure a local ignored `.env` from `.env.example`. Use `npm run dev` for watch mode or `npm run build` followed by `npm start` for the local production-style listener. The default local port is 5000. Run `npm run typecheck` and `npm test` to verify changes. The default suite uses test doubles. Keep `BOOKINGS_MONGO_INTEGRATION` unset when avoiding database writes.

@@ -22,6 +22,7 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().min(1),
   GITHUB_CLIENT_ID: z.string().min(1),
   GITHUB_CLIENT_SECRET: z.string().min(1),
+  IMGBB_API_KEY: z.string().optional(),
 });
 
 type Application = { app: ReturnType<typeof createApp>; port: number };
@@ -92,6 +93,7 @@ async function initialize(): Promise<Application> {
       app: createApp(
         auth, env.CLIENT_URL, services, bookings, payments,
         createAdminUserStore(db), createAdminTransactionStore(db), createAdminOverviewStore(db),
+        env.IMGBB_API_KEY,
       ),
       port: env.PORT,
     };

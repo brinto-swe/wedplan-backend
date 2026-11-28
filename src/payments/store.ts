@@ -31,6 +31,7 @@ export type Transaction = {
   currency: string;
   status: "paid" | "failed";
   type: "subscription";
+  plan?: "premium";
   createdAt: Date;
 };
 type Receipt = { _id: string; type: string; status: "processed" | "ignored"; processedAt: Date };

@@ -10,14 +10,14 @@ test("Admin transaction routes read the Stripe ledger through safe projections",
   const vendor = new ObjectId();
   const other = new ObjectId();
   const rows = [
-    { _id: "in_Alpha1", vendorId: String(vendor), status: "paid", currency: "usd", createdAt: new Date("2026-01-10T00:00:00Z") },
+    { _id: "in_Alpha1", plan: "premium", vendorId: String(vendor), status: "paid", currency: "usd", createdAt: new Date("2026-01-10T00:00:00Z") },
     { _id: "in_Alpha2", vendorId: String(vendor), status: "failed", currency: "eur", createdAt: new Date("2026-01-10T23:59:59Z") },
     { _id: "in_Beta1", vendorId: String(other), status: "paid", currency: "usd", createdAt: new Date("2026-01-11T00:00:00Z") },
   ].map((row) => ({ ...row, amount: 1500, type: "subscription", customerId: "synthetic",
     eventId: "synthetic", subscriptionId: "synthetic", paymentMethod: "synthetic" }));
   const snapshot = structuredClone(rows);
-  const allFields = ["amount", "amountUnit", "createdAt", "currency", "dateBasis", "id", "status", "type", "vendor", "vendorId"].sort();
-  const projectionFields = ["_id", "amount", "createdAt", "currency", "status", "type", "vendorId"];
+  const allFields = ["amount", "amountUnit", "createdAt", "currency", "dateBasis", "id", "plan", "status", "type", "vendor", "vendorId"].sort();
+  const projectionFields = ["_id", "amount", "createdAt", "currency", "plan", "status", "type", "vendorId"];
   const actors = {
     admin: { id: "admin", role: "admin" },
     blocked: { id: "blocked", role: "admin", isBlocked: true },
@@ -102,6 +102,7 @@ test("Admin transaction routes read the Stripe ledger through safe projections",
     if (query.startsWith("?page=")) assert.deepEqual(pagination, { page: 2, limit: 1, total: 3, totalPages: 3 });
     for (const transaction of data) {
       assert.deepEqual(Object.keys(transaction).sort(), allFields);
+      assert.equal(transaction.plan, transaction.id === "in_Alpha1" ? "premium" : null);
       assert.equal(transaction.amountUnit, "minor");
       assert.equal(transaction.dateBasis, "stripe_invoice_event");
       assert.deepEqual(transaction.vendor, transaction.vendorId === String(vendor) ?
@@ -112,6 +113,7 @@ test("Admin transaction routes read the Stripe ledger through safe projections",
   assert.equal(response.status, 200);
   const { data } = await response.json();
   assert.deepEqual(Object.keys(data).sort(), [...allFields, "billingPeriod", "invoiceCreatedAt"].sort());
+  assert.equal(data.plan, "premium");
   assert.equal(data.amount, 1500);
   assert.equal(data.status, "paid");
   assert.equal(data.billingPeriod, null);

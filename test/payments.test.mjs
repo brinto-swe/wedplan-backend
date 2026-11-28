@@ -292,6 +292,7 @@ test("Stripe payment HTTP routes, signed webhooks, transactional reconciliation 
     await createService();
     await createService();
     assert.equal(await publishedCount(), 6);
+    assert.equal(rows.stripeTransactions.find(({ _id }) => _id === invoice.id).plan, "premium");
     const history = await (await request("transactions?page=1&limit=1")).json();
     assert.equal(history.pagination.total, 1);
     assert.deepEqual(Object.keys(history.data[0]).sort(), ["amount", "createdAt", "currency", "id", "status", "type"]);
@@ -310,6 +311,7 @@ test("Stripe payment HTTP routes, signed webhooks, transactional reconciliation 
     assert.equal((await deliver(event("evt_renewal_failed", "invoice.payment_failed", { ...invoice }))).status, 200);
     assert.equal((await getStatus()).plan, "free");
     assert.equal(rows.stripeTransactions.find(({ _id }) => _id === invoice.id).status, "failed");
+    assert.equal(rows.stripeTransactions.find(({ _id }) => _id === invoice.id).plan, "premium");
     assert.equal(await publishedCount(), 3);
   });
 

@@ -5,7 +5,7 @@ import { stripeTransactionsCollection, type Transaction } from "../payments/stor
 import type { AdminTransactionQuery } from "./schemas.js";
 
 const projection = {
-  _id: 1, vendorId: 1, amount: 1, currency: 1, status: 1, type: 1, createdAt: 1,
+  _id: 1, vendorId: 1, amount: 1, currency: 1, status: 1, type: 1, plan: 1, createdAt: 1,
 } as const;
 
 function formatTransaction(transaction: Transaction) {
@@ -17,6 +17,7 @@ function formatTransaction(transaction: Transaction) {
     currency: transaction.currency,
     status: transaction.status,
     type: transaction.type,
+    plan: transaction.plan === "premium" ? transaction.plan : null,
     createdAt: transaction.createdAt,
     dateBasis: "stripe_invoice_event" as const,
   };

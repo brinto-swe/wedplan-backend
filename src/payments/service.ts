@@ -125,7 +125,7 @@ export function createPayments(stripe: Stripe, store: PaymentStore, config: {
           _id: invoice.id, vendorId: billing._id, customerId, subscriptionId, eventId: event.id,
           amount: event.type === "invoice.paid" ? invoice.amount_paid : invoice.amount_due,
           currency: invoice.currency, status: event.type === "invoice.paid" ? "paid" : "failed",
-          type: "subscription", createdAt: new Date(event.created * 1000),
+          type: "subscription", plan: "premium", createdAt: new Date(event.created * 1000),
         };
       }
     }

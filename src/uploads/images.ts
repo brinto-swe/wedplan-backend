@@ -1,4 +1,5 @@
-import express, { type ErrorRequestHandler } from "express";
+import { isIP } from "node:net";
+import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 import { z } from "zod";
 
 import type { Auth } from "../auth/auth.js";
@@ -62,12 +63,12 @@ async function readImage(body: Buffer, contentType: string) {
   return { file: new Blob([bytes], { type: format.mime }), extension: format.extension };
 }
 
-export function imageUploadRouter(auth: Auth, apiKey?: string, fetchImage: typeof fetch = fetch) {
+export type SignupUpload = { origin: string; reserve: (address: string) => Promise<boolean> };
+
+export function imageUploadRouter(auth: Auth, apiKey?: string, fetchImage: typeof fetch = fetch, signup?: SignupUpload) {
   const router = express.Router();
   const key = apiKey?.trim();
-  router.post(
-    "/images",
-    requireBearerUser(auth, ["vendor", "customer"]),
+  const upload: RequestHandler[] = [
     (request, _response, next) => {
       if (!key) throw new UploadError(503, "Image uploads are unavailable");
       if (!/^multipart\/form-data(?:\s*;|$)/i.test(request.get("content-type") ?? "")) {
@@ -101,7 +102,25 @@ export function imageUploadRouter(auth: Auth, apiKey?: string, fetchImage: typeo
       const { url, display_url: displayUrl } = parsed.data;
       response.status(201).json({ data: [{ url, ...(displayUrl && { displayUrl }) }] });
     },
-  );
+  ];
+  router.post("/images", requireBearerUser(auth, ["vendor", "customer"]), ...upload);
+  if (signup) router.post("/signup-profile-image", async (request, response, next) => {
+    response.set("Cache-Control", "no-store");
+    if (request.get("origin") !== signup.origin || request.get("x-wedplan-upload") !== "signup-profile") {
+      throw new UploadError(403, "Signup image upload origin not allowed");
+    }
+    if (!key) throw new UploadError(503, "Image uploads are unavailable");
+    const platformAddress = process.env.VERCEL === "1" ? request.get("x-vercel-forwarded-for") : undefined;
+    const address = platformAddress && isIP(platformAddress) ? platformAddress : request.socket.remoteAddress ?? "unknown";
+    let allowed;
+    try { allowed = await signup.reserve(address); }
+    catch { throw new UploadError(503, "Signup image uploads are temporarily unavailable"); }
+    if (!allowed) {
+      response.set("Retry-After", String(3600 - Math.floor(Date.now() / 1000) % 3600));
+      throw new UploadError(429, "Signup image limit reached. Try again later.");
+    }
+    next();
+  }, ...upload);
   const uploadErrors: ErrorRequestHandler = (error, _request, response, next) => {
     if (error instanceof UploadError) response.status(error.status).json({ error: error.message });
     else if (error?.type === "entity.too.large") {

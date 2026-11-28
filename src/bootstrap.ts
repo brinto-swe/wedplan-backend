@@ -4,6 +4,7 @@ import type { createApp } from "./app.js";
 import { createAdminUserStore } from "./admin/store.js";
 import { createAdminTransactionStore } from "./admin/transactions.js";
 import { createAdminOverviewStore } from "./admin/overview.js";
+import { createSignupUploadLimiter } from "./uploads/signup-limit.js";
 import { mongoEnvSchema } from "./db/config.js";
 
 const httpOrigin = z.url({ protocol: /^https?$/ }).transform((value) => new URL(value).origin);
@@ -93,7 +94,7 @@ async function initialize(): Promise<Application> {
       app: createApp(
         auth, env.CLIENT_URL, services, bookings, payments,
         createAdminUserStore(db), createAdminTransactionStore(db), createAdminOverviewStore(db),
-        env.IMGBB_API_KEY,
+        env.IMGBB_API_KEY, createSignupUploadLimiter(db, env.BETTER_AUTH_SECRET),
       ),
       port: env.PORT,
     };

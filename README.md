@@ -44,6 +44,12 @@ A successful request returns HTTP `201` with `{"data":[{"url":"https://i.ibb.co/
 
 The multipart body is capped at **4,259,840 bytes (4 MiB + 64 KiB)** including overhead, below Vercel’s default 4.5 MB request limit. The endpoint returns `413` if either size limit is exceeded and `400` for zero or multiple file parts. To upload several images, send one request per image. Reduce any image larger than 4 MiB before uploading.
 
+### Optional signup profile photo
+
+The signup form uses `POST /api/uploads/signup-profile-image` before account creation. It accepts exactly one image using the same multipart, 4 MiB, and image validation rules. The route requires the configured frontend origin and the `X-WedPlan-Upload: signup-profile` header. MongoDB enforces fixed UTC-hour limits of 10 requests per client address and 40 deployment-wide. The limits apply before parsing and fail closed if the database is unavailable. Requests routed through a shared proxy may share a client quota.
+
+The browser submits the returned URL with Better Auth signup only after the upload succeeds. Signup without a photo continues to use Better Auth directly. Removing a selection or a subsequent failed signup can leave the hosted asset in ImgBB.
+
 ### Service image persistence
 
 Vendor `POST /api/services` requires an ordered `images` array of 1–10 HTTPS image URLs from `i.ibb.co`. Upload each file first, then send the returned URL in that array. Service PATCH requests, including Admin updates, preserve images when the field is omitted. Send a complete replacement array to add, remove, or reorder images. An empty array clears the service’s image references. Updating the record does not delete files from ImgBB.

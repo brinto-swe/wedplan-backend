@@ -36,12 +36,12 @@ const auth = {
   $context: Promise.resolve({ internalAdapter: { findUserById: async (id) => users[id] && { id, ...users[id] } } }),
 };
 
-async function serve(t, key) {
-  const server = createApp(auth, "http://localhost:3000", {}, undefined, undefined, undefined, undefined, undefined, key)
+async function serve(t, key, reserve, path = "images") {
+  const server = createApp(auth, "http://localhost:3000", {}, undefined, undefined, undefined, undefined, undefined, key, reserve)
     .listen(0, "127.0.0.1");
   t.after(() => new Promise((resolve) => server.close(resolve)));
   await once(server, "listening");
-  const endpoint = "http://127.0.0.1:" + server.address().port + "/api/uploads/images";
+  const endpoint = "http://127.0.0.1:" + server.address().port + "/api/uploads/" + path;
   return (actor, body, headers = {}) => request(endpoint, {
     method: "POST", body, headers: { ...headers, ...(actor && { Authorization: "Bearer " + actor }) },
   });
@@ -133,4 +133,41 @@ test("missing ImgBB configuration returns 503 without making upstream requests",
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { error: "Image uploads are unavailable" });
   assert.equal(upstream.mock.callCount(), 0);
+});
+
+test("signup profile uploads require the configured origin and quota and reuse image validation", async (t) => {
+  let upstream = 0;
+  let reserved = 0;
+  let limit = "available";
+  const url = "https://i.ibb.co/example/signup.png";
+  t.mock.method(globalThis, "fetch", async () => {
+    upstream++;
+    return Response.json({ success: true, data: { url, delete_url: "private" } });
+  });
+  const upload = await serve(t, "fixture-key", async () => {
+    reserved++;
+    if (limit === "error") throw new Error("private database detail");
+    return limit === "available";
+  }, "signup-profile-image");
+  const headers = { Origin: "http://localhost:3000", "X-WedPlan-Upload": "signup-profile" };
+  assert.equal((await upload(null, multipart(image()), { ...headers, Origin: "https://foreign.example" })).status, 403);
+  assert.equal((await upload(null, multipart(image()), { Origin: headers.Origin })).status, 403);
+  assert.equal(reserved, 0);
+  assert.equal((await upload(null, multipart(image(Buffer.from("invalid"))), headers)).status, 415);
+  assert.equal((await upload(null, multipart(image(paddedPng(maxImageBytes + 1))), headers)).status, 413);
+  assert.equal((await upload(null, multipart(image(), image()), headers)).status, 400);
+  assert.equal(upstream, 0);
+  const response = await upload(null, multipart(image()), headers);
+  assert.equal(response.status, 201);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), { data: [{ url }] });
+  limit = "exhausted";
+  const throttled = await upload(null, multipart(image()), headers);
+  assert.equal(throttled.status, 429);
+  assert.ok(Number(throttled.headers.get("retry-after")) > 0);
+  limit = "error";
+  const unavailable = await upload(null, multipart(image()), headers);
+  assert.equal(unavailable.status, 503);
+  assert.doesNotMatch(await unavailable.text(), /private database detail/);
+  assert.equal(upstream, 1);
 });

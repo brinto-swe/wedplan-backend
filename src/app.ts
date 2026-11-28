@@ -18,12 +18,12 @@ import { bookingErrors, createBookingRouter } from "./bookings/routes.js";
 import type { BookingStore } from "./bookings/store.js";
 import { paymentRouter, stripeWebhook } from "./payments/routes.js";
 import type { Payments } from "./payments/service.js";
-import { imageUploadRouter } from "./uploads/images.js";
+import { imageUploadRouter, type SignupUpload } from "./uploads/images.js";
 
 export function createApp(
   auth: Auth, clientOrigin: string, services: ServiceStore, bookings?: BookingStore, payments?: Payments,
   adminUsers?: AdminUserStore, adminTransactions?: AdminTransactionStore, adminOverview?: AdminOverviewStore,
-  imgbbApiKey?: string,
+  imgbbApiKey?: string, signupImageReserve?: SignupUpload["reserve"],
 ) {
   const app = express();
 
@@ -33,7 +33,7 @@ export function createApp(
   if (payments) app.use("/api/webhooks/stripe", stripeWebhook(payments));
   app.all("/api/auth/*splat", toNodeHandler(auth));
   if (adminUsers) app.use("/api/admin", createAdminRouter(adminUsers, auth, services, adminTransactions, adminOverview));
-  app.use("/api/uploads", imageUploadRouter(auth, imgbbApiKey));
+  app.use("/api/uploads", imageUploadRouter(auth, imgbbApiKey, undefined, signupImageReserve && { origin: clientOrigin, reserve: signupImageReserve }));
   app.use("/api/me", profileRouter(auth));
 
   app.use(express.json());

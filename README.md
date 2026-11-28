@@ -1,5 +1,13 @@
 # WedPlan Backend
 
+WedPlan’s Express and TypeScript API handles Better Auth sessions, service moderation, bookings, ImgBB uploads, and Stripe subscription reconciliation. It stores application data in MongoDB Atlas and gives Admins read-only access to the invoice ledger.
+
+- [Live assignment Preview](https://deploy-preview-1--wedplan-frontend.netlify.app/)
+- [Frontend repository](https://github.com/brinto-swe/wedplan-frontend/tree/preview/admin-live-test)
+- [Backend repository](https://github.com/brinto-swe/wedplan-backend/tree/preview/stripe-sandbox)
+
+Copy `.env.example` to an ignored local `.env` and explicitly set the database for the environment you intend to use. See [local development](#local-development) for install and run commands.
+
 ## Vercel deployment
 
 Import this repository as an **Express** project with the repository root as the root directory. Select Node.js **24.x** and use Vercel’s native Express integration. The root `app.ts` default export is the hosted entry. Leave the output directory override unset. The hosted application does not use a start command or a manually configured port.
